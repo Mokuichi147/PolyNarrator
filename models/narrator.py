@@ -1,7 +1,6 @@
 from typing import Optional
+from pydantic import BaseModel
 
-
-class Narrator:
-    def __init__(self, name: str, gender: Optional[str] = None):
-        self.name = name
-        self.gender = gender
+class Narrator(BaseModel):
+    name: str
+    gender: Optional[str] = None

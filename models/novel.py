@@ -11,4 +11,4 @@ class Novel:
             lines = f.readlines()
         
         for line in lines:
-            self.sentences.append(Sentence(line.strip()))
+            self.sentences.append(Sentence(text = line.strip()))

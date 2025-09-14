@@ -1,8 +1,7 @@
 from typing import Optional
+from pydantic import BaseModel
 from models.narrator import Narrator
 
-class Sentence:
+class Sentence(BaseModel):
     narrator: Optional[Narrator] = None
-    
-    def __init__(self, text: str):
-        self.text = text
+    text: str
