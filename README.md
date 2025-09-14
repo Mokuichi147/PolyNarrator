@@ -9,6 +9,7 @@
 |- models
     |- sentence.py
     |- narrator.py
+    |- novel.py
 |- tts.py
 |- main.py
 ```
