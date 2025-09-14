@@ -6,7 +6,7 @@ class Novel:
     sentences: List[Sentence] = []
     narrators: List[Narrator] = []
     
-    def load(self, filepath: str):
+    def load(self, filepath: str) -> None:
         with open(filepath, "r", encoding="utf-8") as f:
             lines = f.readlines()
         
