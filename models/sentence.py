@@ -4,5 +4,5 @@ from models.narrator import Narrator
 class Sentence:
     narrator: Optional[Narrator] = None
     
-    def __init__(self, sentence: str):
-        self.sentence = sentence
+    def __init__(self, text: str):
+        self.text = text
