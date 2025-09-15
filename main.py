@@ -15,11 +15,11 @@ def main():
     print("\n".join([s.text for s in novel.sentences]))
     
     ai = Ai(args.host, args.port, args.model)
-    narrators = ai.get_narrators(novel)
+    narrators = ai.get_narrators(novel, narrators)
     
     print("\n登場人物一覧")
     for narrator in narrators:
-        print(f"- {narrator.name}: {narrator.gender}")
+        print(f"- {narrator.name} ({narrator.gender}) {narrator.aliases}")
 
 
 if __name__ == "__main__":
