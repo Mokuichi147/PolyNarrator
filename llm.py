@@ -51,6 +51,9 @@ class Ai:
             model = self.model,
             format = schema,
             think = True,
+            options = {
+                "num_ctx": 16000
+            }
         )
         
         data = response.message.content
