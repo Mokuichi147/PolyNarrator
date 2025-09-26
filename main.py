@@ -30,10 +30,14 @@ def main():
         print(index + 1, filepath)
         print("\n".join([f"  - {i.name} ({i.gender}) {i.aliases}" for i in narrators]))
         print()
+        
+        novel.narrators = narrators
+        ai.set_estimation_narrator(novel, 40, 10)
     
     print("\n登場人物一覧")
     for narrator in narrators:
         print(f"- {narrator.name} ({narrator.gender}) {narrator.aliases}")
+    
 
 
 if __name__ == "__main__":
