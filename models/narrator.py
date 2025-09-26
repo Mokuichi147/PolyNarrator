@@ -5,5 +5,6 @@ from models.gender import Gender
 
 class Narrator(BaseModel):
     name: str
+    portrait: str
     aliases: List[str] = []
     gender: Optional[Gender] = None
