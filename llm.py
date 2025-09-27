@@ -68,7 +68,7 @@ class Ai:
             print("エラーが発生しました", response.message.content)
             return []
     
-    def set_estimation_narrator(self, novel: Novel, pre_max_count: int = 15, after_max_count: int = 1):
+    def set_estimation_narrator(self, novel: Novel, pre_max_count: int = 15, after_max_count: int = 1, corner_bracket_only: bool = False):
         schema = NarratorIndex.model_json_schema()
         narrators = [Narrator(name = "ナレーター", portrait = "世界観の説明などキャラクターの発言ではない内容のナレーションを行う")]
         narrators.extend(novel.narrators[:])
@@ -77,6 +77,11 @@ class Ai:
             pre_sentences = novel.sentences[:i][-pre_max_count:]
             sentence = novel.sentences[i]
             after_sentences = novel.sentences[i+1:][:after_max_count]
+            
+            if corner_bracket_only and not (sentence.text.startswith("「") and sentence.text.endswith("」")):
+                novel.sentences[i].narrator = narrators[0]
+                print(f"{novel.sentences[i].narrator.name}\t{novel.sentences[i].text}")
+                continue
             
             content: str = f"""
                 今までの内容:

@@ -32,7 +32,7 @@ def main():
         print()
         
         novel.narrators = narrators
-        ai.set_estimation_narrator(novel, 40, 10)
+        ai.set_estimation_narrator(novel, 40, 10, True)
     
     print("\n登場人物一覧")
     for narrator in narrators:
