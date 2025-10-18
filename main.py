@@ -10,7 +10,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", default="11434")
-    parser.add_argument("--model", default="qwen3:30b-a3b-thinking-2507-q4_K_M")
+    parser.add_argument("--model", default="granite4:small-h")
     parser.add_argument("folder", help="data")
     args = parser.parse_args()
     
