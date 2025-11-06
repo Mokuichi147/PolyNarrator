@@ -82,16 +82,24 @@ class Ai:
                 print(f"{novel.sentences[i].narrator.name}\t{novel.sentences[i].text}")
                 continue
             
-            content: str = f"""
-                今までの内容:
-                {"\n".join([f"{s.narrator.name}\t{s.text}" if s.narrator != None and s.narrator.name != "ナレーター" else f"\t{s.text}" for s in pre_sentences])}
-                
-                推測したいセリフの内容:
-                {sentence.text}
-                
-                後の内容:
-                {"\n".join([f"{s.text}" for s in after_sentences])}
-                """
+            pre_context = "\n".join(
+                [
+                    f"{s.narrator.name}\t{s.text}"
+                    if s.narrator is not None and s.narrator.name != "ナレーター"
+                    else f"\t{s.text}"
+                    for s in pre_sentences
+                ]
+            )
+            after_context = "\n".join([s.text for s in after_sentences])
+
+            content: str = (
+                "今までの内容:\n"
+                f"{pre_context}\n\n"
+                "推測したいセリフの内容:\n"
+                f"{sentence.text}\n\n"
+                "後の内容:\n"
+                f"{after_context}"
+            )
             
             messages: List[Message] = [
                 {
