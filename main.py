@@ -128,39 +128,76 @@ def select_speaker_id(
     assigned: Dict[str, int],
     voice_cycle,
     voice_ids: List[int],
+    used_speakers: Counter[str],
+    unique_speaker_names: List[str],
 ) -> int:
     key = narrator_key(narrator)
     if key in assigned:
         return assigned[key]
 
     if voice_cycle is None or not voice_ids:
-        assigned[key] = tts_engine.default_speaker_id
-        return assigned[key]
+        speaker_id = tts_engine.default_speaker_id
+        assigned[key] = speaker_id
+        entry = tts_engine.get_style_entry(speaker_id)
+        if entry:
+            used_speakers[entry["speaker_name"]] += 1
+        return speaker_id
 
     profile = narrator_profile_text(narrator)
     age_bucket = classify_age_bucket(profile)
     used = set(assigned.values())
-    pool_size = max(len(voice_ids), 1)
+    total_unique_speakers = max(len(unique_speaker_names), 1)
+
+    def is_available(entry: Optional[Dict]) -> bool:
+        if not entry:
+            return False
+        speaker_name = entry["speaker_name"]
+        if speaker_name not in used_speakers:
+            return True
+        return len(used_speakers) >= total_unique_speakers
 
     for speaker_name, style_hint in speaker_candidates(narrator, age_bucket):
         speaker_id = tts_engine.find_style_id(speaker_name, style_hint)
         if speaker_id is not None:
-            if speaker_id in used and len(used) < pool_size:
+            entry = tts_engine.get_style_entry(speaker_id)
+            if speaker_id in used and len(used) < len(voice_ids):
+                continue
+            if not is_available(entry):
                 continue
             assigned[key] = speaker_id
+            if entry:
+                used_speakers[entry["speaker_name"]] += 1
             return speaker_id
 
     # ラウンドロビンで未使用の話者を割り当てる
     for _ in range(len(voice_ids)):
         candidate = next(voice_cycle)
-        if candidate not in used:
+        entry = tts_engine.get_style_entry(candidate)
+        if candidate in used and len(used) < len(voice_ids):
+            continue
+        if not is_available(entry):
+            continue
             assigned[key] = candidate
+            if entry:
+                used_speakers[entry["speaker_name"]] += 1
             return candidate
 
     # すべて使用済みの場合は最も少ない使用回数の話者を再利用
+    if unique_speaker_names:
+        best_name = min(unique_speaker_names, key=lambda name: (used_speakers.get(name, 0), name))
+        styles = tts_engine.styles_by_speaker(best_name)
+        if styles:
+            chosen = styles[0]["id"]
+            assigned[key] = chosen
+            used_speakers[best_name] += 1
+            return chosen
+
     usage_counts = Counter(assigned.values())
     best_candidate = min(voice_ids, key=lambda vid: (usage_counts.get(vid, 0), vid))
     assigned[key] = best_candidate
+    entry = tts_engine.get_style_entry(best_candidate)
+    if entry:
+        used_speakers[entry["speaker_name"]] += 1
     return assigned[key]
 
     assigned[key] = tts_engine.default_speaker_id
@@ -217,6 +254,8 @@ def main():
     speaker_assignments: Dict[str, int] = {}
     voice_ids: List[int] = []
     voice_cycle = None
+    used_speakers: Counter[str] = Counter()
+    unique_speaker_names: List[str] = []
 
     if args.tts_output:
         tts_engine = TextToSpeech(
@@ -232,6 +271,7 @@ def main():
         )
         tts_root = Path(args.tts_output)
         voice_ids = sorted({entry["id"] for entry in tts_engine.available_style_entries()})
+        unique_speaker_names = sorted(tts_engine.speaker_names())
         if not voice_ids:
             voice_ids = [tts_engine.default_speaker_id]
         voice_cycle = cycle(voice_ids)
@@ -275,6 +315,8 @@ def main():
                         speaker_assignments,
                         voice_cycle,
                         voice_ids,
+                        used_speakers,
+                        unique_speaker_names,
                     )
                     assignments[key] = VoiceAssignment(speaker_id=speaker_id)
                     style_desc = tts_engine.describe_style(speaker_id)
@@ -295,7 +337,10 @@ def main():
                         print(f"    ! 音声生成に失敗しました ({narrator_name}): {exc}")
                         continue
                     style_desc = tts_engine.describe_style(speaker_id)
-                    print(f"    -> {outfile} ({style_desc})")
+                    entry = tts_engine.get_style_entry(speaker_id)
+                    speaker_name = entry["speaker_name"] if entry else str(speaker_id)
+                    usage = used_speakers.get(speaker_name, 0)
+                    print(f"    -> {outfile} ({style_desc}) [使用回数:{usage}]")
     
     print("\n登場人物一覧")
     for narrator in narrators:

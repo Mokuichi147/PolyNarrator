@@ -114,6 +114,12 @@ class TextToSpeech:
     def available_style_entries(self) -> List[Dict]:
         return list(self._style_lookup.values())
 
+    def get_style_entry(self, speaker_id: int) -> Optional[Dict]:
+        return self._style_lookup.get(speaker_id)
+
+    def speaker_names(self) -> List[str]:
+        return list(self._styles_by_name.keys())
+
     def _create_audio_query(self, text: str, speaker_id: int) -> Dict:
         response = self._post(
             "/audio_query",
