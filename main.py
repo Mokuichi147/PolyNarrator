@@ -1,6 +1,8 @@
 import argparse
 import os
+from collections import Counter
 from dataclasses import dataclass, field
+from itertools import cycle
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -71,6 +73,15 @@ def narrator_profile_text(narrator: Optional[Narrator]) -> str:
     return " ".join(parts)
 
 
+def narrator_key(narrator: Optional[Narrator]) -> str:
+    if narrator is None:
+        return "__NARRATOR__"
+
+    aliases = sorted(narrator.aliases or [])
+    alias_str = "|".join(aliases)
+    return f"{narrator.name}|{alias_str}"
+
+
 def resolve_gender(narrator: Optional[Narrator]) -> Gender:
     if narrator and narrator.gender:
         if isinstance(narrator.gender, Gender):
@@ -111,14 +122,49 @@ def speaker_candidates(narrator: Optional[Narrator], age_bucket: str) -> List[Tu
     return unique
 
 
-def select_speaker_id(narrator: Optional[Narrator], tts_engine: TextToSpeech) -> int:
+def select_speaker_id(
+    narrator: Optional[Narrator],
+    tts_engine: TextToSpeech,
+    assigned: Dict[str, int],
+    voice_cycle,
+    voice_ids: List[int],
+) -> int:
+    key = narrator_key(narrator)
+    if key in assigned:
+        return assigned[key]
+
+    if voice_cycle is None or not voice_ids:
+        assigned[key] = tts_engine.default_speaker_id
+        return assigned[key]
+
     profile = narrator_profile_text(narrator)
     age_bucket = classify_age_bucket(profile)
+    used = set(assigned.values())
+    pool_size = max(len(voice_ids), 1)
+
     for speaker_name, style_hint in speaker_candidates(narrator, age_bucket):
         speaker_id = tts_engine.find_style_id(speaker_name, style_hint)
         if speaker_id is not None:
+            if speaker_id in used and len(used) < pool_size:
+                continue
+            assigned[key] = speaker_id
             return speaker_id
-    return tts_engine.default_speaker_id
+
+    # ラウンドロビンで未使用の話者を割り当てる
+    for _ in range(len(voice_ids)):
+        candidate = next(voice_cycle)
+        if candidate not in used:
+            assigned[key] = candidate
+            return candidate
+
+    # すべて使用済みの場合は最も少ない使用回数の話者を再利用
+    usage_counts = Counter(assigned.values())
+    best_candidate = min(voice_ids, key=lambda vid: (usage_counts.get(vid, 0), vid))
+    assigned[key] = best_candidate
+    return assigned[key]
+
+    assigned[key] = tts_engine.default_speaker_id
+    return assigned[key]
 
 
 def chunk_lines(lines: List[str], max_chars: int = 300) -> List[str]:
@@ -168,6 +214,9 @@ def main():
     narrators = []
     tts_engine = None
     tts_root: Path | None = None
+    speaker_assignments: Dict[str, int] = {}
+    voice_ids: List[int] = []
+    voice_cycle = None
 
     if args.tts_output:
         tts_engine = TextToSpeech(
@@ -182,6 +231,10 @@ def main():
             timeout=args.tts_timeout,
         )
         tts_root = Path(args.tts_output)
+        voice_ids = sorted({entry["id"] for entry in tts_engine.available_style_entries()})
+        if not voice_ids:
+            voice_ids = [tts_engine.default_speaker_id]
+        voice_cycle = cycle(voice_ids)
         speakers = ", ".join(tts_engine.available_speakers()) or "N/A"
         print(
             "TTS 初期化: engine=voicevox, "
@@ -216,8 +269,16 @@ def main():
                 narrator: Narrator | None = sentence.narrator
                 key = narrator.name if narrator else "ナレーター"
                 if key not in assignments:
-                    speaker_id = select_speaker_id(narrator, tts_engine)
+                    speaker_id = select_speaker_id(
+                        narrator,
+                        tts_engine,
+                        speaker_assignments,
+                        voice_cycle,
+                        voice_ids,
+                    )
                     assignments[key] = VoiceAssignment(speaker_id=speaker_id)
+                    style_desc = tts_engine.describe_style(speaker_id)
+                    print(f"  -> 話者割当 {key}: {style_desc}")
                 assignments[key].lines.append(sentence.text)
 
             for position, (narrator_name, assignment) in enumerate(assignments.items(), start=1):
