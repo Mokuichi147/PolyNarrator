@@ -9,11 +9,11 @@ from models.novel import Novel
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", default="11434")
+    parser.add_argument("--port", default="1234")
     parser.add_argument("--model", default="granite4:small-h")
     parser.add_argument("folder", help="data")
     args = parser.parse_args()
-    
+
     ai = Ai(args.host, args.port, args.model)
     narrators = []
     

@@ -1,5 +1,6 @@
 from typing import List, Optional
-from ollama import Client, Message
+from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic import RootModel
 
 from models.narrator import Narrator
@@ -14,18 +15,33 @@ class NarratorIndex(RootModel[int]):
     pass
 
 class Ai:
-    client: Client
-    
+    client: OpenAI
+
     def __init__(self, host: str, port: str, model: str):
-        self.client = Client(
-            host = f"http://{host}:{port}"
+        self.client = OpenAI(
+            base_url = f"http://{host}:{port}/v1",
+            api_key = "lm-studio",
         )
         self.model = model
+
+    def _chat(self, messages: List[ChatCompletionMessageParam], schema: dict) -> str:
+        response = self.client.chat.completions.create(
+            model = self.model,
+            messages = messages,
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.get("title", "response"),
+                    "schema": schema,
+                },
+            },
+        )
+        return response.choices[0].message.content
     
     def get_narrators(self, novel: Novel, narrators: List[Narrator] = []) -> List[Narrator]:
         schema = Narrators.model_json_schema()
         
-        messages: List[Message] = [
+        messages: List[ChatCompletionMessageParam] = [
             {
                 "role": "system",
                 "content": \
@@ -50,21 +66,11 @@ class Ai:
             }
         )
         
-        response = self.client.chat(
-            messages = messages,
-            model = self.model,
-            format = schema,
-            #think = True,
-            options = {
-                "num_ctx": 16000
-            }
-        )
-        
-        data = response.message.content
+        data = self._chat(messages, schema)
         try:
             return Narrators.model_validate_json(data).root
         except:
-            print("エラーが発生しました", response.message.content)
+            print("エラーが発生しました", data)
             return []
     
     def set_estimation_narrator(self, novel: Novel, pre_max_count: int = 15, after_max_count: int = 1, corner_bracket_only: bool = False):
@@ -93,7 +99,7 @@ class Ai:
                 {"\n".join([f"{s.text}" for s in after_sentences])}
                 """
             
-            messages: List[Message] = [
+            messages: List[ChatCompletionMessageParam] = [
                 {
                     "role": "system",
                     "content": \
@@ -111,22 +117,12 @@ class Ai:
                 }
             ]
             
-            response = self.client.chat(
-                messages = messages,
-                model = self.model,
-                format = schema,
-                #think = True,
-                options = {
-                    "num_ctx": 16000
-                }
-            )
-            
-            data = response.message.content
+            data = self._chat(messages, schema)
             narrator_index: Optional[int] = None
             try:
                 narrator_index = NarratorIndex.model_validate_json(data).root
             except:
-                print("エラーが発生しました", response.message.content)
+                print("エラーが発生しました", data)
 
             if narrator_index is not None and 0 <= narrator_index < len(narrators):
                 novel.sentences[i].narrator = narrators[narrator_index]
