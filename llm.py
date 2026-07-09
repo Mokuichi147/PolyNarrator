@@ -5,12 +5,13 @@ from pydantic import RootModel
 
 from models.narrator import Narrator
 from models.novel import Novel
+import utils
 
 class Narrators(RootModel[List[Narrator]]):
     """登場人物のリスト"""
     pass
 
-class NarratorIndex(RootModel[int]):
+class NarratorResponse(RootModel[int]):
     """登場人物一覧のインデックス"""
     pass
 
@@ -37,20 +38,30 @@ class Ai:
             },
         )
         return response.choices[0].message.content
-    
+
+    def _parse_json(self, data: str, model_cls: type[RootModel]):
+        try:
+            return model_cls.model_validate_json(data)
+        except Exception:
+            json_content = utils.extract_single_json_block(data)
+            if json_content:
+                return model_cls.model_validate_json(json_content)
+            raise
+
     def get_narrators(self, novel: Novel, narrators: List[Narrator] = []) -> List[Narrator]:
         schema = Narrators.model_json_schema()
-        
+
         messages: List[ChatCompletionMessageParam] = [
             {
                 "role": "system",
                 "content": \
                     "ユーザーから与えられた小説の内容から登場人物を全て抽出し、指定されたJsonフォーマットで返答してください。"\
                     "同一の人物や一覧内で命名の揺れがないこと。"\
-                    "今までの登場人物一覧が与え得られた場合は、内容を適宜更新すること。"
+                    "今までの登場人物一覧が与え得られた場合は、内容を適宜更新すること。\n"\
+                    f"レスポンスフォーマット:\n{schema}"
             }
         ]
-        
+
         if len(narrators) > 0:
             messages.append(
                 {
@@ -58,54 +69,55 @@ class Ai:
                     "content": "今までの登場人物一覧:\n" + "\n".join([f"- {n.name} ({n.gender})" for n in narrators]),
                 }
             )
-        
+
         messages.append(
             {
                 "role": "user",
                 "content": "\n小説の内容:\n" + "\n".join([s.text for s in novel.sentences]),
             }
         )
-        
+
         data = self._chat(messages, schema)
         try:
-            return Narrators.model_validate_json(data).root
+            return self._parse_json(data, Narrators).root
         except:
             print("エラーが発生しました", data)
             return []
-    
+
     def set_estimation_narrator(self, novel: Novel, pre_max_count: int = 15, after_max_count: int = 1, corner_bracket_only: bool = False):
-        schema = NarratorIndex.model_json_schema()
+        schema = NarratorResponse.model_json_schema()
         narrators = [Narrator(name = "ナレーター", portrait = "世界観の説明などキャラクターの発言ではない内容のナレーションを行う")]
         narrators.extend(novel.narrators[:])
-        
+
         for i in range(len(novel.sentences)):
             pre_sentences = novel.sentences[:i][-pre_max_count:]
             sentence = novel.sentences[i]
             after_sentences = novel.sentences[i+1:][:after_max_count]
-            
+
             if corner_bracket_only and not (sentence.text.startswith("「") and sentence.text.endswith("」")):
                 novel.sentences[i].narrator = narrators[0]
                 print(f"{novel.sentences[i].narrator.name}\t{novel.sentences[i].text}")
                 continue
-            
+
             content: str = f"""
                 今までの内容:
                 {"\n".join([f"{s.narrator.name}\t{s.text}" if s.narrator != None and s.narrator.name != "ナレーター" else f"\t{s.text}" for s in pre_sentences])}
-                
+
                 推測したいセリフの内容:
                 {sentence.text}
-                
+
                 後の内容:
                 {"\n".join([f"{s.text}" for s in after_sentences])}
                 """
-            
+
             messages: List[ChatCompletionMessageParam] = [
                 {
                     "role": "system",
                     "content": \
                         "会話の内容から指定されたセリフがどの登場人物による発言かを推測し、指定されたJsonフォーマットで返答してください。"\
                         "会話は推定したい文とその前後の内容が与えられます。"\
-                        "誰のセリフとも考えられない場合はナレーターを指定してください。"
+                        "誰のセリフとも考えられない場合はナレーターを指定してください。\n"\
+                        f"レスポンスフォーマット:\n{schema}"
                 },
                 {
                     "role": "user",
@@ -116,12 +128,13 @@ class Ai:
                     "content": content,
                 }
             ]
-            
+
             data = self._chat(messages, schema)
             narrator_index: Optional[int] = None
             try:
-                narrator_index = NarratorIndex.model_validate_json(data).root
-            except:
+                narrator_index = self._parse_json(data, NarratorResponse).root
+            except Exception as e:
+                print(e)
                 print("エラーが発生しました", data)
 
             if narrator_index is not None and 0 <= narrator_index < len(narrators):
@@ -129,5 +142,5 @@ class Ai:
             else:
                 novel.sentences[i].narrator = narrators[0]
                 print(f"失敗\t", end="")
-            
+
             print(f"{novel.sentences[i].narrator.name}\t{novel.sentences[i].text}")
