@@ -1,5 +1,5 @@
 from typing import List, Optional
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, RootModel
 
@@ -15,6 +15,9 @@ class NarratorResponse(BaseModel):
     """登場人物一覧のインデックス"""
     narrator_index: int
 
+class ContextLengthExceededError(Exception):
+    pass
+
 class Ai:
     client: OpenAI
 
@@ -26,17 +29,23 @@ class Ai:
         self.model = model
 
     def _chat(self, messages: List[ChatCompletionMessageParam], schema: dict) -> str:
-        response = self.client.chat.completions.create(
-            model = self.model,
-            messages = messages,
-            response_format = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": schema.get("title", "response"),
-                    "schema": schema,
+        try:
+            response = self.client.chat.completions.create(
+                model = self.model,
+                messages = messages,
+                response_format = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema.get("title", "response"),
+                        "schema": schema,
+                    },
                 },
-            },
-        )
+            )
+        except BadRequestError as e:
+            message = str(e)
+            if "context" in message.lower():
+                raise ContextLengthExceededError(message) from e
+            raise
         return response.choices[0].message.content
 
     def _parse_json(self, data: str, model_cls: type[BaseModel]):
@@ -90,7 +99,6 @@ class Ai:
         narrators.extend(novel.narrators[:])
 
         for i in range(len(novel.sentences)):
-            pre_sentences = novel.sentences[:i][-pre_max_count:]
             sentence = novel.sentences[i]
             after_sentences = novel.sentences[i+1:][:after_max_count]
 
@@ -99,43 +107,58 @@ class Ai:
                 print(f"{novel.sentences[i].narrator.name}\t{novel.sentences[i].text}")
                 continue
 
-            content: str = f"""
-                今までの内容:
-                {"\n".join([f"{s.narrator.name}\t{s.text}" if s.narrator != None and s.narrator.name != "ナレーター" else f"\t{s.text}" for s in pre_sentences])}
+            current_pre_max_count = pre_max_count
+            data: Optional[str] = None
+            while True:
+                pre_sentences = novel.sentences[:i][-current_pre_max_count:] if current_pre_max_count > 0 else []
 
-                推測したいセリフの内容:
-                {sentence.text}
+                content: str = f"""
+                    今までの内容:
+                    {"\n".join([f"{s.narrator.name}\t{s.text}" if s.narrator != None and s.narrator.name != "ナレーター" else f"\t{s.text}" for s in pre_sentences])}
 
-                後の内容:
-                {"\n".join([f"{s.text}" for s in after_sentences])}
-                """
+                    推測したいセリフの内容:
+                    {sentence.text}
 
-            messages: List[ChatCompletionMessageParam] = [
-                {
-                    "role": "system",
-                    "content": \
-                        "会話の内容から指定されたセリフがどの登場人物による発言かを推測し、指定されたJsonフォーマットで返答してください。"\
-                        "会話は推定したい文とその前後の内容が与えられます。"\
-                        "誰のセリフとも考えられない場合はナレーターを指定してください。\n"\
-                        f"レスポンスフォーマット:\n{schema}"
-                },
-                {
-                    "role": "user",
-                    "content": "登場人物一覧:\n" + "\n".join([f"{index}. {narrator.name} (性別:{narrator.gender}, 別名:{narrator.aliases}, 説明:{narrator.portrait})" for index, narrator in enumerate(narrators)]),
-                },
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ]
+                    後の内容:
+                    {"\n".join([f"{s.text}" for s in after_sentences])}
+                    """
 
-            data = self._chat(messages, schema)
+                messages: List[ChatCompletionMessageParam] = [
+                    {
+                        "role": "system",
+                        "content": \
+                            "会話の内容から指定されたセリフがどの登場人物による発言かを推測し、指定されたJsonフォーマットで返答してください。"\
+                            "会話は推定したい文とその前後の内容が与えられます。"\
+                            "誰のセリフとも考えられない場合はナレーターを指定してください。\n"\
+                            f"レスポンスフォーマット:\n{schema}"
+                    },
+                    {
+                        "role": "user",
+                        "content": "登場人物一覧:\n" + "\n".join([f"{index}. {narrator.name} (性別:{narrator.gender}, 別名:{narrator.aliases}, 説明:{narrator.portrait})" for index, narrator in enumerate(narrators)]),
+                    },
+                    {
+                        "role": "user",
+                        "content": content,
+                    }
+                ]
+
+                try:
+                    data = self._chat(messages, schema)
+                    break
+                except ContextLengthExceededError:
+                    if current_pre_max_count <= 0:
+                        print("コンテキスト長超過のため、履歴を空にしても失敗しました")
+                        break
+                    current_pre_max_count = current_pre_max_count // 2
+                    print(f"コンテキスト長超過のため、履歴を直前{current_pre_max_count}文に縮小して再試行します")
+
             narrator_index: Optional[int] = None
-            try:
-                narrator_index = self._parse_json(data, NarratorResponse).narrator_index
-            except Exception as e:
-                print(e)
-                print("エラーが発生しました", data)
+            if data is not None:
+                try:
+                    narrator_index = self._parse_json(data, NarratorResponse).narrator_index
+                except Exception as e:
+                    print(e)
+                    print("エラーが発生しました", data)
 
             if narrator_index is not None and 0 <= narrator_index < len(narrators):
                 novel.sentences[i].narrator = narrators[narrator_index]
