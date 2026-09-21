@@ -11,8 +11,8 @@ class JevSpeakerEstimator:
 
     client: TypeSafeClient
 
-    # 入力長超過を示すエラーメッセージのキーワード
-    INPUT_TOO_LONG_KEYWORDS = ("context", "token", "length", "too long", "too large")
+    # 400/422のときに入力長超過とみなすエラーメッセージのキーワード
+    INPUT_TOO_LONG_KEYWORDS = ("context length", "context window", "maximum token", "max token", "token limit", "too many tokens", "input too long", "too long")
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, base_url: Optional[str] = None):
         self.client = TypeSafeClient(
@@ -38,7 +38,10 @@ class JevSpeakerEstimator:
         return criteria
 
     def _is_input_too_long(self, error: TypeSafeAPIError) -> bool:
-        if error.status not in (400, 413, 422):
+        # 413はリクエストサイズ超過なので無条件に入力長超過とみなす
+        if error.status == 413:
+            return True
+        if error.status not in (400, 422):
             return False
         message = f"{error} {error.body}".lower()
         return any(keyword in message for keyword in self.INPUT_TOO_LONG_KEYWORDS)
