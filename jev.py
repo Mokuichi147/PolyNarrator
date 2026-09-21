@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional
 
-from typesafe_sdk import Choice, TypeSafeAPIError, TypeSafeClient, TypeSafeError
+from typesafe_sdk import Choice, ChoiceAnswer, TypeSafeAPIError, TypeSafeClient, TypeSafeError
 
 from models.narrator import Narrator
 from models.novel import Novel
@@ -10,6 +10,9 @@ class JevSpeakerEstimator:
     """Jev(TypeSafe System One API)互換モデルで話者を判定する"""
 
     client: TypeSafeClient
+
+    # 入力長超過を示すエラーメッセージのキーワード
+    INPUT_TOO_LONG_KEYWORDS = ("context", "token", "length", "too long", "too large")
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, base_url: Optional[str] = None):
         self.client = TypeSafeClient(
@@ -34,7 +37,13 @@ class JevSpeakerEstimator:
             }
         return criteria
 
-    def _ask(self, narrators: List[Narrator], pre_sentences: list, sentence_text: str, after_sentences: list):
+    def _is_input_too_long(self, error: TypeSafeAPIError) -> bool:
+        if error.status not in (400, 413, 422):
+            return False
+        message = f"{error} {error.body}".lower()
+        return any(keyword in message for keyword in self.INPUT_TOO_LONG_KEYWORDS)
+
+    def _ask(self, narrators: List[Narrator], pre_sentences: list, sentence_text: str, after_sentences: list) -> Optional[ChoiceAnswer]:
         state = {
             "今までの内容": [
                 {"話者": s.narrator.name, "セリフ": s.text} if s.narrator != None and s.narrator.name != "ナレーター" else {"セリフ": s.text}
@@ -50,7 +59,8 @@ class JevSpeakerEstimator:
                 "誰のセリフとも考えられない場合はナレーターを選択してください。",
             criteria = self._build_criteria(narrators),
         )
-        return self.client.system_one(state, {"speaker": question}).choices["speaker"]
+        # 未対応の回答種別はSDKが読み飛ばすため、回答が欠けている場合はNoneを返す
+        return self.client.system_one(state, {"speaker": question}).choices.get("speaker")
 
     def set_estimation_narrator(self, novel: Novel, pre_max_count: int = 15, after_max_count: int = 1, corner_bracket_only: bool = False):
         narrators = [Narrator(name = "ナレーター", portrait = "世界観の説明などキャラクターの発言ではない内容のナレーションを行う")]
@@ -67,19 +77,19 @@ class JevSpeakerEstimator:
                 continue
 
             current_pre_max_count = pre_max_count
-            answer = None
+            answer: Optional[ChoiceAnswer] = None
             while True:
                 pre_sentences = novel.sentences[:i][-current_pre_max_count:] if current_pre_max_count > 0 else []
                 try:
                     answer = self._ask(narrators, pre_sentences, sentence.text, after_sentences)
                     break
                 except TypeSafeAPIError as e:
-                    # 入力長超過などのリクエスト不正は履歴を縮小して再試行する
-                    if e.status not in (400, 413, 422) or current_pre_max_count <= 0:
+                    # 入力長超過のときだけ履歴を縮小して再試行する
+                    if not self._is_input_too_long(e) or current_pre_max_count <= 0:
                         print(e)
                         break
                     current_pre_max_count = current_pre_max_count // 2
-                    print(f"リクエストに失敗したため、履歴を直前{current_pre_max_count}文に縮小して再試行します")
+                    print(f"入力長超過のため、履歴を直前{current_pre_max_count}文に縮小して再試行します")
                 except TypeSafeError as e:
                     # 接続エラーやタイムアウトはこの文の推測を諦めてナレーター扱いにする
                     print(e)
