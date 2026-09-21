@@ -3,9 +3,13 @@ from models.narrator import Narrator
 from models.sentence import Sentence
 
 class Novel:
-    sentences: List[Sentence] = []
-    narrators: List[Narrator] = []
-    
+    sentences: List[Sentence]
+    narrators: List[Narrator]
+
+    def __init__(self) -> None:
+        self.sentences = []
+        self.narrators = []
+
     def load(self, filepath: str) -> None:
         with open(filepath, "r", encoding="utf-8") as f:
             lines = f.readlines()
