@@ -1,15 +1,15 @@
 from typing import List, Optional
 from openai import BadRequestError, OpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from pydantic import BaseModel, RootModel
+from pydantic import BaseModel
 
 from models.narrator import Narrator
 from models.novel import Novel
 import utils
 
-class Narrators(RootModel[List[Narrator]]):
+class Narrators(BaseModel):
     """登場人物のリスト"""
-    pass
+    narrators: List[Narrator]
 
 class NarratorResponse(BaseModel):
     """登場人物一覧のインデックス"""
@@ -88,7 +88,7 @@ class Ai:
 
         data = self._chat(messages, schema)
         try:
-            return self._parse_json(data, Narrators).root
+            return self._parse_json(data, Narrators).narrators
         except:
             print("エラーが発生しました", data)
             return []

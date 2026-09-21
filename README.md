@@ -18,6 +18,7 @@
 ## 使い方
 
 登場人物の抽出は LM Studio などの OpenAI API 準拠サーバーで行います。
+Ollama を使う場合は `--port 11434` を指定します。
 
 ```
 uv run main.py --host localhost --port 1234 --model granite4:small-h data/

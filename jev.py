@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional
 
-from typesafe_sdk import Choice, TypeSafeAPIError, TypeSafeClient
+from typesafe_sdk import Choice, TypeSafeAPIError, TypeSafeClient, TypeSafeError
 
 from models.narrator import Narrator
 from models.novel import Novel
@@ -21,10 +21,12 @@ class JevSpeakerEstimator:
     def _build_criteria(self, narrators: List[Narrator]) -> Dict[str, dict]:
         criteria: Dict[str, dict] = {}
         for index, narrator in enumerate(narrators):
-            # 選択肢のキーは一意である必要があるため、名前が重複した場合は番号を付ける
+            # 選択肢のキーは一意である必要があるため、名前が重複した場合は未使用になるまで番号を付ける
             key = narrator.name
-            if key in criteria:
-                key = f"{narrator.name} ({index})"
+            suffix = 2
+            while key in criteria:
+                key = f"{narrator.name} ({suffix})"
+                suffix += 1
             criteria[key] = {
                 "性別": narrator.gender.value if narrator.gender is not None else "不明",
                 "別名": narrator.aliases,
@@ -78,6 +80,10 @@ class JevSpeakerEstimator:
                         break
                     current_pre_max_count = current_pre_max_count // 2
                     print(f"リクエストに失敗したため、履歴を直前{current_pre_max_count}文に縮小して再試行します")
+                except TypeSafeError as e:
+                    # 接続エラーやタイムアウトはこの文の推測を諦めてナレーター扱いにする
+                    print(e)
+                    break
 
             narrator_index: Optional[int] = None
             confidence: float = 0.0
