@@ -1,6 +1,8 @@
 import argparse
 import math
 import os
+import tempfile
+import unicodedata
 from pathlib import Path
 from typing import List, Optional
 
@@ -9,6 +11,10 @@ from llm import Ai
 from jev import JevSpeakerEstimator
 from models.novel import Novel
 from tts import OpenAiSpeechClient, TtsClient, VoiceAssigner, WyomingClient, synthesize_sentences, write_wav
+
+
+# 無音はメモリ上に作るため、極端な値で大量のメモリを確保しないよう上限を設ける
+MAX_PAUSE = 60.0
 
 
 def split_voices(value: Optional[str]) -> List[str]:
@@ -28,6 +34,13 @@ def positive_float(value: str) -> float:
     number = float(value)
     if not math.isfinite(number) or number <= 0:
         raise argparse.ArgumentTypeError("0より大きい数値を指定してください")
+    return number
+
+
+def pause_seconds(value: str) -> float:
+    number = non_negative_float(value)
+    if number > MAX_PAUSE:
+        raise argparse.ArgumentTypeError(f"{MAX_PAUSE:g}秒以下を指定してください")
     return number
 
 
@@ -81,6 +94,42 @@ def create_tts(args: argparse.Namespace) -> tuple[TtsClient, VoiceAssigner]:
     return client, assigner
 
 
+def output_path(output_dir: Path, file: str) -> Path:
+    return output_dir / f"{Path(file).stem}.wav"
+
+
+def check_output_dir(path: Path, files: List[str]) -> None:
+    """LLMやTTSサーバーでの処理を始める前に、出力先を作成して書き込めるかを確認する"""
+    try:
+        path.mkdir(parents = True, exist_ok = True)
+        with tempfile.TemporaryFile(dir = path):
+            pass
+    except OSError as e:
+        raise SystemExit(f"音声の出力先に書き込めません({path}): {e}")
+    outputs = [output_path(path, f) for f in files]
+    # 大文字小文字や Unicode 正規化を区別しないファイルシステムでも上書きし合わないよう、正規化した名前で比べる
+    keys = [unicodedata.normalize("NFC", p.name).casefold() for p in outputs]
+    duplicates = sorted({str(p) for p, key in zip(outputs, keys) if keys.count(key) > 1})
+    if len(duplicates) > 0:
+        raise SystemExit(f"複数の入力ファイルの出力先が同じになります: {duplicates}")
+    conflicts = [str(p) for p in outputs if p.exists() and not p.is_file()]
+    if len(conflicts) > 0:
+        raise SystemExit(f"音声の出力先にファイル以外のものがあります: {conflicts}")
+
+
+def load_novels(folder: str, files: List[str]) -> List[Novel]:
+    """LLMやTTSサーバーでの処理を始める前に、全ての入力ファイルを読み込んでおく"""
+    novels: List[Novel] = []
+    for file in files:
+        novel = Novel()
+        try:
+            novel.load(os.path.join(folder, file))
+        except (OSError, UnicodeDecodeError) as e:
+            raise SystemExit(f"入力ファイルを読み込めませんでした({os.path.join(folder, file)}): {e}")
+        novels.append(novel)
+    return novels
+
+
 def list_text_files(folder: str) -> List[str]:
     """入力フォルダ内のテキストファイル名を自然順で返す。.DS_Store や出力済みの音声などは対象外"""
     try:
@@ -114,7 +163,7 @@ def synthesize_file(novel: Novel, outfile: Path, client: TtsClient, assigner: Vo
         else:
             print(f"音声を書き出しました: {outfile}")
     if result.skipped > 0:
-        print(f"読み上げる文字がない{result.skipped}文は読み飛ばしました")
+        print(f"記号だけで読み上げる文字がない{result.skipped}行は読み飛ばしました")
     return len(result.failures) > 0
 
 
@@ -137,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tts-narrator-voice", default=None, help="ナレーターの音声(未指定時は音声一覧の先頭)")
     parser.add_argument("--tts-male-voices", default=None, help="男性の登場人物に優先して使う音声のカンマ区切り一覧")
     parser.add_argument("--tts-female-voices", default=None, help="女性の登場人物に優先して使う音声のカンマ区切り一覧")
-    parser.add_argument("--tts-pause", type=non_negative_float, default=0.3, help="行と行(長い行を分割した場合は分割した塊)の間に入れる無音の秒数")
+    parser.add_argument("--tts-pause", type=pause_seconds, default=0.3, help="行と行(長い行を分割した場合は分割した塊)の間に入れる無音の秒数")
     parser.add_argument("--tts-max-chars", type=non_negative_int, default=200, help="1回の合成に送る最大文字数。超える行は文末・読点・文字数の順で分割する(0で分割しない)")
     parser.add_argument("--tts-timeout", type=positive_float, default=60.0, help="TTSサーバーへのリクエストタイムアウト秒数")
     parser.add_argument("folder", help="data")
@@ -145,26 +194,28 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main():
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    # 出力先を作る前に入力フォルダを確認する(出力先の作成で入力フォルダが作られてしまわないように)
     files = list_text_files(args.folder)
+    novels = load_novels(args.folder, files)
+    if args.tts_output is not None:
+        if args.tts_output == "":
+            parser.error("--tts-output に出力先のディレクトリを指定してください")
+        check_output_dir(Path(args.tts_output), files)
 
     ai = Ai(args.host, args.port, args.model)
     if args.speaker_backend == "jev":
         speaker_estimator = JevSpeakerEstimator(args.jev_api_key, args.jev_model, args.jev_base_url)
     else:
         speaker_estimator = ai
-    tts: Optional[tuple[TtsClient, VoiceAssigner]] = create_tts(args) if args.tts_output else None
+    tts: Optional[tuple[TtsClient, VoiceAssigner]] = create_tts(args) if args.tts_output is not None else None
     narrators = []
     failed_files: List[str] = []
     
-    for index, file in enumerate(files):
+    for index, (file, novel) in enumerate(zip(files, novels)):
         filepath = os.path.join(args.folder, file)
         
-        novel = Novel()
-        try:
-            novel.load(filepath)
-        except (OSError, UnicodeDecodeError) as e:
-            raise SystemExit(f"入力ファイルを読み込めませんでした({filepath}): {e}")
         response = ai.get_narrators(novel, narrators)
         if len(response) > 0:
             narrators = response
@@ -178,7 +229,7 @@ def main():
 
         if tts is not None:
             client, assigner = tts
-            outfile = Path(args.tts_output) / f"{Path(file).stem}.wav"
+            outfile = output_path(Path(args.tts_output), file)
             if synthesize_file(novel, outfile, client, assigner, args.tts_max_chars, args.tts_pause):
                 failed_files.append(file)
     

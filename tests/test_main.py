@@ -1,3 +1,4 @@
+import os
 import socket
 import wave
 from typing import List, Optional, Sequence
@@ -28,6 +29,8 @@ def test_parser_defaults():
     ["--tts-pause", "-1"],
     ["--tts-pause", "nan"],
     ["--tts-pause", "inf"],
+    ["--tts-pause", "60.1"],
+    ["--tts-pause", "1e10"],
     ["--tts-max-chars", "-1"],
     ["--tts-max-chars", "1.5"],
     ["--tts-timeout", "0"],
@@ -40,9 +43,10 @@ def test_parser_rejects_invalid_values(args):
         parse(*args)
 
 
-def test_parser_accepts_zero():
+def test_parser_accepts_boundaries():
     args = parse("--tts-pause", "0", "--tts-max-chars", "0")
     assert (args.tts_pause, args.tts_max_chars) == (0.0, 0)
+    assert parse("--tts-pause", "60").tts_pause == 60.0
 
 
 # --- 入力ファイル ---
@@ -164,7 +168,7 @@ def test_synthesize_file_writes_wav(tmp_path, capsys):
     assert outfile.exists()
     output = capsys.readouterr().out
     assert "音声を書き出しました" in output
-    assert "1文は読み飛ばしました" in output
+    assert "1行は読み飛ばしました" in output
 
 
 def test_synthesize_file_reports_partial_failure(tmp_path, capsys):
@@ -298,3 +302,135 @@ def test_main_aborts_without_writing_wav_after_consecutive_failures(monkeypatch,
     with pytest.raises(SystemExit, match = "連続"):
         run_main(monkeypatch, tmp_path, client)
     assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["1.wav"]
+
+
+@pytest.mark.parametrize("output", ["", "file"])
+def test_main_rejects_invalid_output(monkeypatch, tmp_path, output):
+    (tmp_path / "file").write_text("")
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(main, "Ai", FakeAi)
+    target = output and str(tmp_path / output)
+    monkeypatch.setattr("sys.argv", ["main.py", "--tts-output", target, str(tmp_path / "data")])
+    with pytest.raises(SystemExit) as e:
+        main.main()
+    assert e.value.code != 0
+
+
+def test_main_with_openai_client(monkeypatch, tmp_path, speech_server):
+    url, requests = speech_server
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "1.txt").write_text("あ\n＊　＊　＊\nモニカ・エヴァレット:い\n", encoding = "utf-8")
+    (data / "2.txt").write_text("モニカ:bad\nルイス:え\n", encoding = "utf-8")
+    monkeypatch.setattr(main, "Ai", FakeAi)
+    monkeypatch.setattr("sys.argv", [
+        "main.py", "--tts-output", str(tmp_path / "out"), "--tts-url", url, "--tts-model", "m",
+        "--tts-voices", "n,a,b", "--tts-pause", "0", str(data),
+    ])
+    with pytest.raises(SystemExit, match = "2.txt"):
+        main.main()
+    assert [(r["input"], r["voice"]) for r in requests] == [
+        ("あ", "n"), ("モニカ・エヴァレット:い", "a"), ("モニカ:bad", "a"), ("ルイス:え", "b"),
+    ]
+    with wave.open(str(tmp_path / "out" / "2.wav"), "rb") as wav:
+        assert wav.getnframes() == 240
+
+
+def test_main_checks_input_folder_before_creating_output(monkeypatch, tmp_path):
+    missing = tmp_path / "missing"
+    monkeypatch.setattr(main, "Ai", FakeAi)
+    monkeypatch.setattr("sys.argv", ["main.py", "--tts-output", str(missing / "out"), str(missing)])
+    with pytest.raises(SystemExit, match = "入力フォルダ"):
+        main.main()
+    assert not missing.exists()
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason = "root は書き込み権限を無視する")
+def test_main_rejects_unwritable_output_before_processing(monkeypatch, tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "1.txt").write_text("あ", encoding = "utf-8")
+    output = tmp_path / "out"
+    output.mkdir()
+    output.chmod(0o555)
+
+    def fail(*args):
+        raise AssertionError("出力先の確認前に話者推測を始めた")
+
+    monkeypatch.setattr(main, "Ai", fail)
+    monkeypatch.setattr("sys.argv", ["main.py", "--tts-output", str(output), str(tmp_path / "data")])
+    try:
+        with pytest.raises(SystemExit, match = "書き込めません"):
+            main.main()
+    finally:
+        output.chmod(0o755)
+
+
+def fail_if_called(*args):
+    raise AssertionError("入力・出力先の確認前に話者推測を始めた")
+
+
+def test_main_validates_all_inputs_before_processing(monkeypatch, tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "1.txt").write_text("あ", encoding = "utf-8")
+    (data / "2.txt").write_bytes("い".encode("shift_jis"))
+    monkeypatch.setattr(main, "Ai", fail_if_called)
+    monkeypatch.setattr("sys.argv", ["main.py", "--tts-output", str(tmp_path / "out"), str(data)])
+    with pytest.raises(SystemExit, match = "2.txt"):
+        main.main()
+
+
+def test_main_rejects_conflicting_output_path_before_processing(monkeypatch, tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "1.txt").write_text("あ", encoding = "utf-8")
+    (data / "2.txt").write_text("い", encoding = "utf-8")
+    (tmp_path / "out" / "2.wav").mkdir(parents = True)
+    monkeypatch.setattr(main, "Ai", fail_if_called)
+    monkeypatch.setattr("sys.argv", ["main.py", "--tts-output", str(tmp_path / "out"), str(data)])
+    with pytest.raises(SystemExit, match = "2.wav"):
+        main.main()
+
+
+@pytest.mark.parametrize("names", [
+    [".txt", ".txt.txt"],
+    ["A.txt", "a.txt"],
+    ["\u30ac.txt", "\u30ab\u3099.txt"],  # NFC の「ガ」と NFD の「カ + 濁点」
+])
+def test_check_output_dir_rejects_duplicate_output_names(tmp_path, names):
+    with pytest.raises(SystemExit, match = "出力先が同じ"):
+        main.check_output_dir(tmp_path / "out", names)
+
+
+def test_main_rejects_duplicate_output_names_before_processing(monkeypatch, tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / ".txt").write_text("あ", encoding = "utf-8")
+    (data / ".txt.txt").write_text("い", encoding = "utf-8")
+    monkeypatch.setattr(main, "Ai", fail_if_called)
+    monkeypatch.setattr("sys.argv", ["main.py", "--tts-output", str(tmp_path / "out"), str(data)])
+    with pytest.raises(SystemExit, match = "出力先が同じ"):
+        main.main()
+
+
+def test_main_with_wyoming_client(monkeypatch, tmp_path, wyoming_server):
+    uri, state = wyoming_server
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "1.txt").write_text("あ\nモニカ・エヴァレット:い\n", encoding = "utf-8")
+    (data / "2.txt").write_text("ルイス:う\nモニカ:error\n", encoding = "utf-8")
+    monkeypatch.setattr(main, "Ai", FakeAi)
+    monkeypatch.setattr("sys.argv", [
+        "main.py", "--tts-output", str(tmp_path / "out"), "--tts-backend", "wyoming", "--tts-url", uri,
+        "--tts-language", "ja-JP", "--tts-narrator-voice", "ja-multi", "--tts-pause", "0", str(data),
+    ])
+    with pytest.raises(SystemExit, match = "2.txt"):
+        main.main()
+    voices = [(r.text, r.voice.name, r.voice.speaker) for r in state["requests"]]
+    assert voices == [
+        ("あ", "ja-multi", None),
+        ("モニカ・エヴァレット:い", "ja-a", None),
+        ("ルイス:う", "ja-multi", "s1"),
+        ("モニカ:error", "ja-a", None),
+    ]
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["1.wav", "2.wav"]

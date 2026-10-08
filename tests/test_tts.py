@@ -1,8 +1,5 @@
-import io
-import json
-import threading
+import dataclasses
 import wave
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -12,6 +9,8 @@ import pytest
 from models.gender import Gender
 from models.narrator import Narrator
 from models.sentence import Sentence
+import tts
+from conftest import wav_bytes
 from tts import (
     MAX_CONSECUTIVE_FAILURES,
     Audio,
@@ -22,6 +21,7 @@ from tts import (
     WyomingClient,
     is_readable,
     split_for_tts,
+    wav_data_size,
     synthesize_sentences,
     write_wav,
 )
@@ -120,6 +120,51 @@ def test_voice_assigner_gender_voices():
     assert assigner.assign(narrator("その他", Gender.OTHER)) == "n"
 
 
+def test_voice_assigner_keeps_assigned_name_when_later_linked_by_alias():
+    assigner = VoiceAssigner(["n", "a", "b"])
+    assert assigner.assign(narrator("A")) == "a"
+    assert assigner.assign(narrator("B")) == "b"
+    # 後から B が A の別名と分かっても、書き出し済みの音声と食い違わないよう両者とも元の音声を維持する
+    assert assigner.assign(narrator("B", aliases = ["A"])) == "b"
+    assert assigner.assign(narrator("A")) == "a"
+
+
+def test_voice_assigner_blank_name_and_alias():
+    assigner = VoiceAssigner(["n", "a", "b"])
+    assert assigner.assign(narrator("", Gender.MALE)) == "n"
+    assert assigner.assign(narrator("　")) == "n"
+    assert assigner.assign(narrator("A", aliases = ["", " "])) == "a"
+    assert assigner.assign(narrator("B", aliases = [""])) == "b"
+
+
+def test_voice_assigner_ignores_ambiguous_alias():
+    assigner = VoiceAssigner(["n", "a", "b", "c"])
+    assert assigner.assign(narrator("A", aliases = ["先生"])) == "a"
+    assert assigner.assign(narrator("B", aliases = ["先生"])) == "b"
+    # 複数の人物が持つ別名はどの人物か決められないため、新しい人物として扱う
+    assert assigner.assign(narrator("先生")) == "c"
+
+
+def test_voice_assigner_ignores_alias_shared_by_people_with_same_voice():
+    assigner = VoiceAssigner(["n", "a", "b"], male_voices = ["a"], female_voices = ["a"])
+    assert assigner.assign(narrator("A", Gender.MALE, aliases = ["X"])) == "a"
+    assert assigner.assign(narrator("B", Gender.FEMALE, aliases = ["X"])) == "a"
+    assert assigner.assign(narrator("X", Gender.OTHER)) == "b"
+
+
+def test_voice_assigner_alias_of_same_person_with_varying_name():
+    assigner = VoiceAssigner(["n", "a", "b"])
+    assert assigner.assign(narrator("モニカ・エヴァレット", aliases = ["モニカ", "沈黙の魔女"])) == "a"
+    # 正式名が揺れても同じ人物と分かっている名前から同じ別名が来た場合は、曖昧にしない
+    assert assigner.assign(narrator("モニカ", aliases = ["沈黙の魔女"])) == "a"
+    assert assigner.assign(narrator("沈黙の魔女")) == "a"
+
+
+def test_voice_assigner_gender_voices_only_narrator_falls_back():
+    assigner = VoiceAssigner(["n", "x"], male_voices = ["n"])
+    assert assigner.assign(narrator("太郎", Gender.MALE)) == "x"
+
+
 def test_voice_assigner_matches_aliases_across_files():
     assigner = VoiceAssigner(["n", "a", "b", "c"])
     voice = assigner.assign(narrator("モニカ・エヴァレット", aliases = ["モニカ", "沈黙の魔女"]))
@@ -176,6 +221,11 @@ def test_synthesize_sentences_skips_unreadable_without_request():
     assert len(result.segments) == 2
     assert result.skipped == 2
     assert result.failures == []
+
+
+def test_synthesize_sentences_skipped_counts_symbol_lines_only():
+    result = synthesize_sentences(sentences("", "＊　＊　＊", ""), FakeClient(), VoiceAssigner(["n"]))
+    assert result.skipped == 1
 
 
 def test_synthesize_sentences_records_input_errors_and_continues():
@@ -270,7 +320,7 @@ def test_write_wav_inserts_pause(tmp_path):
     assert (rate, width, channels) == (16000, 2, 1)
     assert len(data) == (100 + 160 + 50) * 2
     assert data[200:200 + 320] == bytes(320)
-    assert not (tmp_path / "out" / "a.wav.tmp").exists()
+    assert [p.name for p in (tmp_path / "out").iterdir()] == ["a.wav"]
 
 
 def test_write_wav_converts_to_first_format(tmp_path):
@@ -299,7 +349,43 @@ def test_write_wav_keeps_existing_file_on_conversion_error(tmp_path):
     with pytest.raises(Exception):
         write_wav(path, [pcm(), broken], pause = 0)
     assert path.read_bytes() == b"old"
-    assert not (tmp_path / "a.wav.tmp").exists()
+    assert [p.name for p in tmp_path.iterdir()] == ["a.wav"]
+
+
+def test_write_wav_with_long_file_name(tmp_path):
+    path = tmp_path / ("あ" * 80 + ".wav")  # UTF-8 で 244 バイト
+    write_wav(path, [pcm()], pause = 0)
+    assert [p.name for p in tmp_path.iterdir()] == [path.name]
+
+
+def test_write_wav_does_not_follow_existing_tmp_symlink(tmp_path):
+    target = tmp_path / "target"
+    target.write_bytes(b"keep")
+    (tmp_path / "a.wav.tmp").symlink_to(target)
+    write_wav(tmp_path / "a.wav", [pcm()], pause = 0)
+    assert target.read_bytes() == b"keep"
+    assert read_wav(tmp_path / "a.wav")[3] == pcm().data
+
+
+@pytest.mark.parametrize("audio", [
+    Audio(0, 2, 1, b"\x01\x00"),
+    Audio(1_000_000_000, 2, 1, b"\x01\x00"),
+    Audio(16000, 8, 1, b"\x00" * 8),
+    Audio(16000, 2, 100, b"\x00" * 200),
+    Audio(16000, 2, 4, b"\x00" * 8),
+])
+def test_validate_audio_rejects_abnormal_format(tmp_path, audio):
+    with pytest.raises(RuntimeError, match = "不正な音声"):
+        write_wav(tmp_path / "a.wav", [audio, audio], pause = 60)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_write_wav_long_pause_is_written_in_blocks(tmp_path):
+    path = tmp_path / "a.wav"
+    write_wav(path, [pcm(frames = 10), pcm(frames = 10)], pause = 2.5)
+    _, _, _, data = read_wav(path)
+    assert len(data) == (10 + 40000 + 10) * 2
+    assert data[20:-20] == bytes(80000)
 
 
 def test_write_wav_rejects_misaligned_pcm(tmp_path):
@@ -316,57 +402,14 @@ def test_write_wav_without_segments_writes_nothing(tmp_path):
     assert not path.exists()
 
 
-def test_write_wav_rejects_negative_pause(tmp_path):
+@pytest.mark.parametrize("segments", [[], [pcm()]])
+def test_write_wav_rejects_negative_pause(tmp_path, segments):
     with pytest.raises(ValueError):
-        write_wav(tmp_path / "a.wav", [pcm()], pause = -1)
+        write_wav(tmp_path / "a.wav", segments, pause = -1)
     assert list(tmp_path.iterdir()) == []
 
 
 # --- OpenAI互換API ---
-
-def wav_bytes(rate: int = 24000, frames: int = 240) -> bytes:
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wav:
-        wav.setframerate(rate)
-        wav.setsampwidth(2)
-        wav.setnchannels(1)
-        wav.writeframes(b"\x01\x00" * frames)
-    return buffer.getvalue()
-
-
-@pytest.fixture
-def speech_server():
-    requests: List[dict] = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            requests.append({"path": self.path, **body})
-            statuses = {"bad": 400, "unprocessable": 422, "unauthorized": 401}
-            if body["model"] == "unknown-model":
-                statuses = {body["input"]: 400}
-            status = statuses.get(body["input"], 200)
-            if status == 200:
-                payload, content_type = wav_bytes(frames = 0 if body["input"] == "zero" else 240), "audio/wav"
-            else:
-                payload = json.dumps({"error": {"message": body["input"], "type": "invalid_request_error"}}).encode()
-                content_type = "application/json"
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, *args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target = server.serve_forever, daemon = True)
-    thread.start()
-    yield f"http://127.0.0.1:{server.server_address[1]}/v1", requests
-    server.shutdown()
-    server.server_close()
-
 
 def test_openai_client_synthesize(speech_server):
     url, requests = speech_server
@@ -380,6 +423,36 @@ def test_openai_client_bad_request_is_input_error(speech_server, text):
     url, _ = speech_server
     with pytest.raises(TtsInputError):
         OpenAiSpeechClient(url, "tts-1", "key", 10).synthesize(text, "alloy")
+
+
+def test_wav_data_size():
+    content = wav_bytes(frames = 10)
+    assert wav_data_size(content) == 20
+    assert wav_data_size(content[:20]) is None
+
+
+def test_openai_client_truncated_wav_is_not_input_error(speech_server):
+    url, _ = speech_server
+    with pytest.raises(RuntimeError, match = "途中で切れた"):
+        OpenAiSpeechClient(url, "tts-1", "key", 10).synthesize("truncated", "alloy")
+
+
+def test_openai_client_truncated_wav_near_size_limit(speech_server):
+    url, _ = speech_server
+    with pytest.raises(RuntimeError, match = "途中で切れた"):
+        OpenAiSpeechClient(url, "tts-1", "key", 10).synthesize("near-limit", "alloy")
+
+
+def test_openai_client_accepts_streaming_wav_header(speech_server):
+    url, _ = speech_server
+    audio = OpenAiSpeechClient(url, "tts-1", "key", 10).synthesize("streaming", "alloy")
+    assert len(audio.data) == 480
+
+
+def test_openai_client_invalid_wav_is_not_input_error(speech_server):
+    url, _ = speech_server
+    with pytest.raises(wave.Error):
+        OpenAiSpeechClient(url, "tts-1", "key", 10).synthesize("notwav", "alloy")
 
 
 def test_openai_client_empty_wav_is_not_input_error(speech_server):
@@ -434,6 +507,34 @@ def test_wyoming_synthesize_with_speaker(wyoming_server):
     assert (audio.rate, audio.width, audio.channels, len(audio.data)) == (22050, 2, 1, 600)
     request = state["requests"][0]
     assert (request.text, request.voice.name, request.voice.speaker) == ("こんにちは", "ja-multi", "s2")
+
+
+def test_wyoming_converts_chunks_to_first_format(wyoming_server):
+    uri, _ = wyoming_server
+    audio = WyomingClient(uri, 5, "ja").synthesize("mixed", "ja-a")
+    assert (audio.rate, audio.width, audio.channels) == (22050, 2, 1)
+    # 続く4つのチャンク(11025Hz ステレオ 各0.1秒)も 22050Hz モノラルに変換され、
+    # 変換器の状態を引き継ぐためチャンク境界でフレーム数がずれない
+    assert abs(len(audio.data) // 2 - (2205 + 2204 * 4)) <= 2
+
+
+def test_wyoming_error_after_partial_audio_is_input_error(wyoming_server):
+    uri, _ = wyoming_server
+    with pytest.raises(TtsInputError, match = "failed midway"):
+        WyomingClient(uri, 5, "ja").synthesize("partial-error", "ja-a")
+
+
+def test_wyoming_uses_first_installed_program(wyoming_server):
+    uri, state = wyoming_server
+    programs = state["info"].tts
+    state["info"] = dataclasses.replace(state["info"], tts = [dataclasses.replace(programs[0], installed = False), *programs[1:]])
+    assert WyomingClient(uri, 5, "ja").list_voices() == ["ja-second"]
+
+
+def test_wyoming_without_installed_program(wyoming_server):
+    uri, state = wyoming_server
+    state["info"] = dataclasses.replace(state["info"], tts = [])
+    assert WyomingClient(uri, 5, "ja").list_voices() == []
 
 
 def test_wyoming_synthesis_error_is_input_error(wyoming_server):
