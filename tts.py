@@ -2,6 +2,8 @@ import asyncio
 import io
 import os
 import re
+import struct
+import tempfile
 import unicodedata
 import wave
 from abc import ABC, abstractmethod
@@ -23,6 +25,15 @@ from models.sentence import Sentence
 
 NARRATOR_NAME = "ナレーター"
 
+# ストリーミングでデータ長が分からないWAVのヘッダーに入る値
+WAV_UNKNOWN_SIZE = 0xFFFFFFFF
+
+# 音声形式として受け付ける上限。異常な形式の音声で無音などに大量のメモリを使わないようにする
+MAX_RATE = 384000
+MAX_WIDTH = 4
+# 形式の変換(AudioChunkConverter)がモノラルとステレオにしか対応していないため
+MAX_CHANNELS = 2
+
 # 入力起因の失敗がこの回数だけ続いた場合は、文ではなくサーバー側の問題とみなして中断する
 MAX_CONSECUTIVE_FAILURES = 5
 
@@ -40,9 +51,21 @@ def validate_audio(audio: Audio) -> Audio:
     """空の音声やフレーム境界の合わない音声は、文の内容ではなくサーバーの不具合とみなして送出する"""
     if len(audio.data) == 0:
         raise RuntimeError("TTSサーバーから空の音声が返されました")
-    if audio.width <= 0 or audio.channels <= 0 or len(audio.data) % (audio.width * audio.channels) != 0:
-        raise RuntimeError(f"TTSサーバーから不正な音声が返されました(width={audio.width}, channels={audio.channels}, {len(audio.data)}バイト)")
+    valid_format = 0 < audio.rate <= MAX_RATE and 0 < audio.width <= MAX_WIDTH and 0 < audio.channels <= MAX_CHANNELS
+    if not valid_format or len(audio.data) % (audio.width * audio.channels) != 0:
+        raise RuntimeError(f"TTSサーバーから不正な音声が返されました(rate={audio.rate}, width={audio.width}, channels={audio.channels}, {len(audio.data)}バイト)")
     return audio
+
+
+def wav_data_size(content: bytes) -> Optional[int]:
+    """WAVの data チャンクに宣言されたバイト数。見つからない場合は None"""
+    position = 12
+    while position + 8 <= len(content):
+        chunk_id, size = struct.unpack_from("<4sI", content, position)
+        if chunk_id == b"data":
+            return size
+        position += 8 + size + (size & 1)
+    return None
 
 
 class TtsInputError(Exception):
@@ -107,11 +130,19 @@ class OpenAiSpeechClient(TtsClient):
                 channels = wav.getnchannels(),
                 data = wav.readframes(wav.getnframes()),
             )
+        # ストリーミング用にデータ長を最大値にしたヘッダーを除き、ヘッダーより短いデータは途中で切れた応答とみなす。
+        # 1フレーム未満の端数は聴感上の影響がないため、フレーム単位で比べる
+        declared = wav_data_size(response.content)
+        frame_size = audio.width * audio.channels
+        if declared is not None and declared != WAV_UNKNOWN_SIZE and frame_size > 0:
+            expected = declared // frame_size * frame_size
+            if len(audio.data) < expected:
+                raise RuntimeError(f"TTSサーバーから途中で切れた音声が返されました({len(audio.data)}/{expected}バイト)")
         return validate_audio(audio)
 
 
 class WyomingClient(TtsClient):
-    """Wyomingプロトコルで音声合成する"""
+    """Wyomingプロトコルで音声合成する。内部で asyncio.run を使う同期APIのため、実行中のイベントループからは呼べない"""
 
     def __init__(self, uri: str, timeout: float, language: Optional[str] = None):
         super().__init__()
@@ -180,6 +211,10 @@ class WyomingClient(TtsClient):
     async def _synthesize(self, text: str, voice: str) -> Audio:
         synthesize_voice = self._voices.get(voice, SynthesizeVoice(name = voice))
         audio: Optional[Audio] = None
+        data = bytearray()
+        # 変換器はリサンプリングの状態を持つため、連続した同じ形式のチャンクでは使い回す
+        converter: Optional[AudioChunkConverter] = None
+        chunk_format: Optional[tuple[int, int, int]] = None
         async with self._connect() as client:
             await client.write_event(Synthesize(text = text, voice = synthesize_voice).event())
             while True:
@@ -190,7 +225,10 @@ class WyomingClient(TtsClient):
                     chunk = AudioChunk.from_event(event)
                     if audio is None:
                         audio = Audio(chunk.rate, chunk.width, chunk.channels, b"")
-                    audio.data += AudioChunkConverter(audio.rate, audio.width, audio.channels).convert(chunk).audio
+                    if converter is None or chunk_format != (chunk.rate, chunk.width, chunk.channels):
+                        converter = AudioChunkConverter(audio.rate, audio.width, audio.channels)
+                        chunk_format = (chunk.rate, chunk.width, chunk.channels)
+                    data += converter.convert(chunk).audio
                 elif AudioStop.is_type(event.type):
                     break
                 elif Error.is_type(event.type):
@@ -201,6 +239,7 @@ class WyomingClient(TtsClient):
         if audio is None:
             # エラーも音声も返さないのは文の内容ではなくサーバーの不具合とみなす
             raise RuntimeError("Wyomingサーバーから音声が返されませんでした")
+        audio.data = bytes(data)
         return validate_audio(audio)
 
 
@@ -229,36 +268,54 @@ class VoiceAssigner:
             Gender.FEMALE: female_voices,
         }
         self.assigned: Dict[str, str] = {NARRATOR_NAME: self.narrator_voice}
-        self._alias_voices: Dict[str, str] = {}
         self.usage: Counter[str] = Counter([self.narrator_voice])
+        # 人物ごとの音声と、名前・別名から人物への対応。複数の人物が持ち、どの人物か決められない別名は None にする
+        self._person_voices: List[str] = []
+        self._name_persons: Dict[str, int] = {}
+        self._alias_persons: Dict[str, Optional[int]] = {}
 
-    def _find_voice(self, narrator: Narrator) -> Optional[str]:
-        if narrator.name in self.assigned:
-            return self.assigned[narrator.name]
+    def _find_person(self, narrator: Narrator) -> Optional[int]:
+        # 割り当て済みの名前は、後から別名で別の人物と結び付いても書き出し済みの音声と食い違わないよう元の人物のままにする
+        if narrator.name in self._name_persons:
+            return self._name_persons[narrator.name]
         # ファイルごとの抽出で正式名が揺れても、以前の別名や正式名と一致すれば同じ人物とみなす。
         # 汎用的な呼び名で別人と混同しないよう、別名同士の一致は使わない
-        if narrator.name in self._alias_voices:
-            return self._alias_voices[narrator.name]
-        return next((self.assigned[a] for a in narrator.aliases if a in self.assigned), None)
+        if self._alias_persons.get(narrator.name) is not None:
+            return self._alias_persons[narrator.name]
+        return next((self._name_persons[a] for a in narrator.aliases if a.strip() and a in self._name_persons), None)
 
     def assign(self, narrator: Optional[Narrator]) -> str:
-        if narrator is None or narrator.name == NARRATOR_NAME:
+        # 名前のない登場人物は誰か区別できないため、ナレーターとして読む
+        if narrator is None or narrator.name == NARRATOR_NAME or not narrator.name.strip():
             return self.narrator_voice
 
-        voice = self._find_voice(narrator)
-        if voice is None:
+        person = self._find_person(narrator)
+        if person is None:
             pool = self.voices
             if narrator.gender is not None and len(self.gender_voices.get(narrator.gender, [])) > 0:
                 pool = self.gender_voices[narrator.gender]
 
-            # ナレーターと聞き分けられるよう、他に候補があればナレーターの音声は避ける
-            candidates = [v for v in pool if v != self.narrator_voice] or pool
+            # ナレーターと聞き分けられるよう、性別ごとの候補、全ての音声の順にナレーター以外の音声を探す
+            candidates = (
+                [v for v in pool if v != self.narrator_voice]
+                or [v for v in self.voices if v != self.narrator_voice]
+                or [self.narrator_voice]
+            )
             voice = min(candidates, key = lambda v: self.usage[v])
             self.usage[voice] += 1
+            person = len(self._person_voices)
+            self._person_voices.append(voice)
 
+        voice = self._person_voices[person]
+        self._name_persons[narrator.name] = person
         self.assigned[narrator.name] = voice
         for alias in narrator.aliases:
-            self._alias_voices.setdefault(alias, voice)
+            if not alias.strip():
+                continue
+            if alias not in self._alias_persons:
+                self._alias_persons[alias] = person
+            elif self._alias_persons[alias] != person:
+                self._alias_persons[alias] = None
         return voice
 
 
@@ -317,7 +374,7 @@ class SynthesisResult:
     segments: List[Audio] = field(default_factory = list)
     # 合成に失敗した行と理由
     failures: List[tuple[str, str]] = field(default_factory = list)
-    # 読み上げる文字がないため送信しなかった文の数
+    # 記号だけで読み上げる文字がないため送信しなかった行の数(空行は含まない)
     skipped: int = 0
 
 
@@ -359,21 +416,32 @@ def synthesize_sentences(
     return result
 
 
+def _write_silence(wav: wave.Wave_write, audio_format: Audio, frames: int) -> None:
+    """無音を一度に確保しないよう、最大1秒ずつ書き出す"""
+    frame = (b"\x80" if audio_format.width == 1 else b"\x00") * (audio_format.width * audio_format.channels)  # 8bit PCM は符号なしのため 0x80 が無音
+    block = frame * min(frames, audio_format.rate)
+    while frames > 0:
+        count = min(frames, audio_format.rate)
+        wav.writeframes(block[:count * len(frame)])
+        frames -= count
+
+
 def write_wav(path: Path, segments: List[Audio], pause: float = 0.0) -> None:
     """音声を順に連結して1つのWAVファイルに書き出す。形式が異なる音声は先頭に合わせて変換する"""
-    if len(segments) == 0:
-        return
     if pause < 0:
         raise ValueError("pause には0以上を指定してください")
+    if len(segments) == 0:
+        return
     for segment in segments:
         validate_audio(segment)
     first = segments[0]
-    # 8bit PCM は符号なしのため 0x80 が無音
-    silence = (b"\x80" if first.width == 1 else b"\x00") * (int(first.rate * pause) * first.width * first.channels)
+    silence_frames = int(first.rate * pause)
 
-    # 途中で失敗しても書きかけのファイルが残らないよう、一時ファイルに書いてから置き換える
+    # 途中で失敗しても書きかけのファイルが残らないよう、同じフォルダに一意な一時ファイルを作ってから置き換える
     path.parent.mkdir(parents = True, exist_ok = True)
-    temp = path.with_name(path.name + ".tmp")
+    # 長いファイル名でも名前の長さの上限を超えないよう、一時ファイルの名前は出力名によらない短いものにする
+    with tempfile.NamedTemporaryFile(dir = path.parent, prefix = ".polynarrator-", suffix = ".wav.tmp", delete = False) as file:
+        temp = Path(file.name)
     try:
         with wave.open(str(temp), "wb") as wav:
             wav.setframerate(first.rate)
@@ -381,7 +449,7 @@ def write_wav(path: Path, segments: List[Audio], pause: float = 0.0) -> None:
             wav.setnchannels(first.channels)
             for index, segment in enumerate(segments):
                 if index > 0:
-                    wav.writeframes(silence)
+                    _write_silence(wav, first, silence_frames)
                 # 変換器はリサンプリングの状態を持つため、音声ごとに作り直す
                 chunk = AudioChunk(segment.rate, segment.width, segment.channels, segment.data)
                 wav.writeframes(AudioChunkConverter(first.rate, first.width, first.channels).convert(chunk).audio)
