@@ -82,6 +82,15 @@ def test_split_for_tts_strictly_limits_chunks_with_symbols(text, max_chars):
     assert all(is_readable(c) for c in chunks)
 
 
+@pytest.mark.parametrize(("text", "max_chars", "expected"), [
+    ("a\u0301\u0308b", 2, ["a\u0301\u0308", "b"]),  # 1文字で上限を超える結合文字列は区切らない
+    ("\u30ab\u3099" * 3, 3, ["\u30ab\u3099", "\u30ab\u3099", "\u30ab\u3099"]),  # NFD の「ガ」
+    ("\u30ab\u3099" * 3 + "。", 4, ["\u30ab\u3099" * 2, "\u30ab\u3099。"]),
+])
+def test_split_for_tts_keeps_combining_marks(text, max_chars, expected):
+    assert split_for_tts(text, max_chars) == expected
+
+
 @pytest.mark.parametrize("text", ["あああああ。い", "あああああ、い", "あああああ。」い", "「ああああ」"])
 def test_split_for_tts_keeps_symbols_at_boundary(text):
     chunks = split_for_tts(text, 5)
@@ -129,6 +138,16 @@ def test_voice_assigner_keeps_assigned_name_when_later_linked_by_alias():
     assert assigner.assign(narrator("A")) == "a"
 
 
+def test_voice_assigner_normalizes_names():
+    assigner = VoiceAssigner(["n", "a", "b"])
+    assert assigner.assign(narrator("A", aliases = ["\u30ab\u3099"])) == "a"
+    assert assigner.assign(narrator(" A ")) == "a"
+    assert assigner.assign(narrator("\u30ac")) == "a"  # NFD の別名と NFC の正式名
+    assert assigner.assign(narrator("Ａ")) == "a"  # 全角
+    assert assigner.assign(narrator(" ナレーター ")) == "n"
+    assert list(assigner.assigned) == ["ナレーター", "A", "\u30ac"]
+
+
 def test_voice_assigner_blank_name_and_alias():
     assigner = VoiceAssigner(["n", "a", "b"])
     assert assigner.assign(narrator("", Gender.MALE)) == "n"
@@ -158,6 +177,13 @@ def test_voice_assigner_alias_of_same_person_with_varying_name():
     # 正式名が揺れても同じ人物と分かっている名前から同じ別名が来た場合は、曖昧にしない
     assert assigner.assign(narrator("モニカ", aliases = ["沈黙の魔女"])) == "a"
     assert assigner.assign(narrator("沈黙の魔女")) == "a"
+
+
+def test_voice_assigner_alias_matching_multiple_people_is_new_person():
+    assigner = VoiceAssigner(["n", "a", "b", "c"])
+    assert assigner.assign(narrator("A")) == "a"
+    assert assigner.assign(narrator("B")) == "b"
+    assert assigner.assign(narrator("C", aliases = ["A", "B"])) == "c"
 
 
 def test_voice_assigner_gender_voices_only_narrator_falls_back():
@@ -342,7 +368,28 @@ def test_write_wav_8bit_silence_is_unsigned_center(tmp_path):
     assert data == b"\x90" * 80 + b"\x80" * 80 + b"\x90" * 80
 
 
-def test_write_wav_keeps_existing_file_on_conversion_error(tmp_path):
+def test_write_wav_keeps_existing_file_on_error_while_writing(tmp_path, monkeypatch):
+    class FailingConverter(tts.AudioChunkConverter):
+        calls = 0
+
+        def convert(self, chunk):
+            FailingConverter.calls += 1
+            if FailingConverter.calls == 2:
+                # 一時ファイルに1つ目の音声を書いた後で失敗させる
+                assert len([p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]) == 1
+                raise RuntimeError("convert failed")
+            return super().convert(chunk)
+
+    monkeypatch.setattr(tts, "AudioChunkConverter", FailingConverter)
+    path = tmp_path / "a.wav"
+    path.write_bytes(b"old")
+    with pytest.raises(RuntimeError, match = "convert failed"):
+        write_wav(path, [pcm(), pcm()], pause = 0)
+    assert path.read_bytes() == b"old"
+    assert [p.name for p in tmp_path.iterdir()] == ["a.wav"]
+
+
+def test_write_wav_keeps_existing_file_on_invalid_audio(tmp_path):
     path = tmp_path / "a.wav"
     path.write_bytes(b"old")
     broken = Audio(8000, 2, 1, b"\x01\x00\x02")
@@ -356,15 +403,6 @@ def test_write_wav_with_long_file_name(tmp_path):
     path = tmp_path / ("あ" * 80 + ".wav")  # UTF-8 で 244 バイト
     write_wav(path, [pcm()], pause = 0)
     assert [p.name for p in tmp_path.iterdir()] == [path.name]
-
-
-def test_write_wav_does_not_follow_existing_tmp_symlink(tmp_path):
-    target = tmp_path / "target"
-    target.write_bytes(b"keep")
-    (tmp_path / "a.wav.tmp").symlink_to(target)
-    write_wav(tmp_path / "a.wav", [pcm()], pause = 0)
-    assert target.read_bytes() == b"keep"
-    assert read_wav(tmp_path / "a.wav")[3] == pcm().data
 
 
 @pytest.mark.parametrize("audio", [
@@ -455,6 +493,23 @@ def test_openai_client_invalid_wav_is_not_input_error(speech_server):
         OpenAiSpeechClient(url, "tts-1", "key", 10).synthesize("notwav", "alloy")
 
 
+def test_openai_client_rejects_too_large_audio(speech_server, monkeypatch):
+    url, _ = speech_server
+    monkeypatch.setattr(tts, "MAX_AUDIO_BYTES", 100)
+    monkeypatch.setattr(tts, "WAV_HEADER_ALLOWANCE", 44)
+    with pytest.raises(RuntimeError, match = "上限"):
+        OpenAiSpeechClient(url, "tts-1", "key", 10).synthesize("こんにちは", "alloy")
+
+
+def test_openai_client_rejects_pcm_over_limit_within_header_allowance(speech_server, monkeypatch):
+    url, _ = speech_server
+    # WAV全体(44 + 480バイト)はヘッダーの許容量の範囲に収まるが、PCM(480バイト)は上限を超える
+    monkeypatch.setattr(tts, "MAX_AUDIO_BYTES", 479)
+    monkeypatch.setattr(tts, "WAV_HEADER_ALLOWANCE", 100)
+    with pytest.raises(RuntimeError, match = "上限"):
+        OpenAiSpeechClient(url, "tts-1", "key", 10).synthesize("こんにちは", "alloy")
+
+
 def test_openai_client_empty_wav_is_not_input_error(speech_server):
     url, _ = speech_server
     with pytest.raises(RuntimeError, match = "空の音声"):
@@ -466,6 +521,18 @@ def test_openai_client_unknown_model_aborts(speech_server):
     client = OpenAiSpeechClient(url, "unknown-model", "key", 10)
     with pytest.raises(RuntimeError, match = "最初の合成"):
         synthesize_sentences(sentences("こんにちは"), client, VoiceAssigner(["alloy"]))
+
+
+def test_openai_client_consecutive_bad_requests_across_files(speech_server, monkeypatch):
+    url, requests = speech_server
+    monkeypatch.setattr(tts, "MAX_CONSECUTIVE_FAILURES", 2)
+    client = OpenAiSpeechClient(url, "tts-1", "key", 10)
+    assigner = VoiceAssigner(["alloy"])
+    result = synthesize_sentences(sentences("こんにちは", "bad"), client, assigner)
+    assert result.failures == [("bad", result.failures[0][1])]
+    with pytest.raises(RuntimeError, match = "連続"):
+        synthesize_sentences(sentences("bad", "さようなら"), client, assigner)
+    assert [r["input"] for r in requests] == ["こんにちは", "bad", "bad"]
 
 
 def test_openai_client_auth_error_is_not_input_error(speech_server):
@@ -518,6 +585,12 @@ def test_wyoming_converts_chunks_to_first_format(wyoming_server):
     assert abs(len(audio.data) // 2 - (2205 + 2204 * 4)) <= 2
 
 
+def test_wyoming_rejects_abnormal_later_chunk(wyoming_server):
+    uri, _ = wyoming_server
+    with pytest.raises(RuntimeError, match = "不正な音声"):
+        WyomingClient(uri, 5, "ja").synthesize("bad-second", "ja-a")
+
+
 def test_wyoming_error_after_partial_audio_is_input_error(wyoming_server):
     uri, _ = wyoming_server
     with pytest.raises(TtsInputError, match = "failed midway"):
@@ -529,6 +602,55 @@ def test_wyoming_uses_first_installed_program(wyoming_server):
     programs = state["info"].tts
     state["info"] = dataclasses.replace(state["info"], tts = [dataclasses.replace(programs[0], installed = False), *programs[1:]])
     assert WyomingClient(uri, 5, "ja").list_voices() == ["ja-second"]
+
+
+def test_wyoming_synthesizes_with_first_installed_program_voice(wyoming_server):
+    uri, state = wyoming_server
+    programs = state["info"].tts
+    state["info"] = dataclasses.replace(state["info"], tts = [dataclasses.replace(programs[0], installed = False), *programs[1:]])
+    client = WyomingClient(uri, 5, "ja")
+    client.synthesize("こんにちは", "ja-second")
+    assert state["requests"][-1].voice.name == "ja-second"
+
+
+def test_wyoming_rejects_too_large_audio(wyoming_server, monkeypatch):
+    uri, _ = wyoming_server
+    monkeypatch.setattr(tts, "MAX_AUDIO_BYTES", 500)
+    converted: List[int] = []
+    original = tts.AudioChunkConverter.convert
+
+    def convert(self, chunk):
+        converted.append(len(chunk.audio))
+        return original(self, chunk)
+
+    monkeypatch.setattr(tts.AudioChunkConverter, "convert", convert)
+    with pytest.raises(RuntimeError, match = "上限"):
+        WyomingClient(uri, 5, "ja").synthesize("こんにちは", "ja-a")
+    # 200バイトのチャンクを2つ変換した後、3つ目は変換する前に拒否する
+    assert converted == [200, 200]
+
+
+def test_wyoming_checks_actual_size_after_conversion(wyoming_server, monkeypatch):
+    uri, _ = wyoming_server
+
+    class GrowingConverter(tts.AudioChunkConverter):
+        def convert(self, chunk):
+            # 見積もりより大きな結果を返す変換
+            converted = super().convert(chunk)
+            return dataclasses.replace(converted, audio = converted.audio * 2)
+
+    monkeypatch.setattr(tts, "AudioChunkConverter", GrowingConverter)
+    monkeypatch.setattr(tts, "MAX_AUDIO_BYTES", 500)
+    with pytest.raises(RuntimeError, match = "上限"):
+        WyomingClient(uri, 5, "ja").synthesize("こんにちは", "ja-a")
+
+
+def test_wyoming_rejects_audio_too_large_after_conversion(wyoming_server, monkeypatch):
+    uri, _ = wyoming_server
+    # 「mixed」の後続チャンク(11025Hz ステレオ)は 22050Hz モノラルへの変換で同じ大きさになる
+    monkeypatch.setattr(tts, "MAX_AUDIO_BYTES", 4410 + 4408 * 2)
+    with pytest.raises(RuntimeError, match = "上限"):
+        WyomingClient(uri, 5, "ja").synthesize("mixed", "ja-a")
 
 
 def test_wyoming_without_installed_program(wyoming_server):

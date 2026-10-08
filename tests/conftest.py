@@ -88,6 +88,10 @@ def wyoming_server():
                 for _ in range(4):
                     await async_write_event(AudioChunk(rate = 11025, width = 2, channels = 2, audio = b"\x01\x00\x01\x00" * 1102).event(), writer)
                 await async_write_event(AudioStop().event(), writer)
+            elif synthesize_text == "bad-second":
+                await async_write_event(AudioChunk(rate = 22050, width = 2, channels = 1, audio = b"\x01\x00" * 100).event(), writer)
+                await async_write_event(AudioChunk(rate = 384001, width = 2, channels = 1, audio = b"\x01\x00" * 100).event(), writer)
+                await async_write_event(AudioStop().event(), writer)
             elif synthesize_text == "odd":
                 await async_write_event(AudioChunk(rate = 22050, width = 2, channels = 1, audio = b"\x01").event(), writer)
                 await async_write_event(AudioStop().event(), writer)
