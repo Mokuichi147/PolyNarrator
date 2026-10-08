@@ -33,6 +33,10 @@ MAX_RATE = 384000
 MAX_WIDTH = 4
 # 形式の変換(AudioChunkConverter)がモノラルとステレオにしか対応していないため
 MAX_CHANNELS = 2
+# 1回の合成で受け取る音声の上限。音声を送り続ける異常なサーバーでメモリを使い切らないようにする
+MAX_AUDIO_BYTES = 1 << 30
+# WAVのヘッダーなど音声以外の部分として許容する大きさ
+WAV_HEADER_ALLOWANCE = 1 << 16
 
 # 入力起因の失敗がこの回数だけ続いた場合は、文ではなくサーバー側の問題とみなして中断する
 MAX_CONSECUTIVE_FAILURES = 5
@@ -47,13 +51,18 @@ class Audio:
     data: bytes
 
 
+def validate_format(rate: int, width: int, channels: int, size: int) -> None:
+    """扱えない形式やフレーム境界の合わない音声は、文の内容ではなくサーバーの不具合とみなして送出する"""
+    valid_format = 0 < rate <= MAX_RATE and 0 < width <= MAX_WIDTH and 0 < channels <= MAX_CHANNELS
+    if not valid_format or size % (width * channels) != 0:
+        raise RuntimeError(f"TTSサーバーから不正な音声が返されました(rate={rate}, width={width}, channels={channels}, {size}バイト)")
+
+
 def validate_audio(audio: Audio) -> Audio:
-    """空の音声やフレーム境界の合わない音声は、文の内容ではなくサーバーの不具合とみなして送出する"""
+    """空の音声や不正な形式の音声は、文の内容ではなくサーバーの不具合とみなして送出する"""
     if len(audio.data) == 0:
         raise RuntimeError("TTSサーバーから空の音声が返されました")
-    valid_format = 0 < audio.rate <= MAX_RATE and 0 < audio.width <= MAX_WIDTH and 0 < audio.channels <= MAX_CHANNELS
-    if not valid_format or len(audio.data) % (audio.width * audio.channels) != 0:
-        raise RuntimeError(f"TTSサーバーから不正な音声が返されました(rate={audio.rate}, width={audio.width}, channels={audio.channels}, {len(audio.data)}バイト)")
+    validate_format(audio.rate, audio.width, audio.channels, len(audio.data))
     return audio
 
 
@@ -111,28 +120,37 @@ class OpenAiSpeechClient(TtsClient):
         return []
 
     def synthesize(self, text: str, voice: str) -> Audio:
+        content = bytearray()
         try:
-            response = self.client.audio.speech.create(
+            with self.client.audio.speech.with_streaming_response.create(
                 model = self.model,
                 voice = voice,
                 input = text,
                 response_format = "wav",
-            )
+            ) as response:
+                # 巨大な応答でメモリを使い切らないよう、上限を超えた時点で読むのをやめる
+                for block in response.iter_bytes():
+                    content += block
+                    if len(content) > MAX_AUDIO_BYTES + WAV_HEADER_ALLOWANCE:
+                        raise RuntimeError(f"TTSサーバーから受け取った音声が上限({MAX_AUDIO_BYTES}バイト)を超えました")
         except (BadRequestError, UnprocessableEntityError) as e:
             # 認証・接続・サーバー内部のエラーは続けても失敗するだけなので、そのまま送出して中断させる
             raise TtsInputError(str(e)) from e
+        content = bytes(content)
 
         # PCM以外のWAVは wave モジュールが wave.Error を送出する
-        with wave.open(io.BytesIO(response.content), "rb") as wav:
+        with wave.open(io.BytesIO(content), "rb") as wav:
             audio = Audio(
                 rate = wav.getframerate(),
                 width = wav.getsampwidth(),
                 channels = wav.getnchannels(),
                 data = wav.readframes(wav.getnframes()),
             )
+        if len(audio.data) > MAX_AUDIO_BYTES:
+            raise RuntimeError(f"TTSサーバーから受け取った音声が上限({MAX_AUDIO_BYTES}バイト)を超えました")
         # ストリーミング用にデータ長を最大値にしたヘッダーを除き、ヘッダーより短いデータは途中で切れた応答とみなす。
         # 1フレーム未満の端数は聴感上の影響がないため、フレーム単位で比べる
-        declared = wav_data_size(response.content)
+        declared = wav_data_size(content)
         frame_size = audio.width * audio.channels
         if declared is not None and declared != WAV_UNKNOWN_SIZE and frame_size > 0:
             expected = declared // frame_size * frame_size
@@ -223,12 +241,23 @@ class WyomingClient(TtsClient):
                     raise RuntimeError("Wyomingサーバーとの接続が切断されました")
                 if AudioChunk.is_type(event.type):
                     chunk = AudioChunk.from_event(event)
+                    # 後続のチャンクの形式が変わる場合もあるため、変換する前にチャンクごとに確認する
+                    validate_format(chunk.rate, chunk.width, chunk.channels, len(chunk.audio))
                     if audio is None:
                         audio = Audio(chunk.rate, chunk.width, chunk.channels, b"")
                     if converter is None or chunk_format != (chunk.rate, chunk.width, chunk.channels):
                         converter = AudioChunkConverter(audio.rate, audio.width, audio.channels)
                         chunk_format = (chunk.rate, chunk.width, chunk.channels)
+                    # 変換で大きくなる場合も含め、変換して保持する前に上限を超えないかを見積もり(切り上げ)、
+                    # リサンプリングの端数で見積もりを超える場合に備えて変換後の実際の大きさでも確認する
+                    output_rate = audio.rate * audio.width * audio.channels
+                    input_rate = chunk.rate * chunk.width * chunk.channels
+                    converted_size = -(-len(chunk.audio) * output_rate // input_rate)
+                    if len(data) + converted_size > MAX_AUDIO_BYTES:
+                        raise RuntimeError(f"Wyomingサーバーから受け取った音声が上限({MAX_AUDIO_BYTES}バイト)を超えました")
                     data += converter.convert(chunk).audio
+                    if len(data) > MAX_AUDIO_BYTES:
+                        raise RuntimeError(f"Wyomingサーバーから受け取った音声が上限({MAX_AUDIO_BYTES}バイト)を超えました")
                 elif AudioStop.is_type(event.type):
                     break
                 elif Error.is_type(event.type):
@@ -274,22 +303,33 @@ class VoiceAssigner:
         self._name_persons: Dict[str, int] = {}
         self._alias_persons: Dict[str, Optional[int]] = {}
 
-    def _find_person(self, narrator: Narrator) -> Optional[int]:
+    @staticmethod
+    def _key(name: str) -> str:
+        """前後の空白や Unicode の表記の違いで別人とみなさないよう、照合用に名前を正規化する"""
+        return unicodedata.normalize("NFKC", name).strip()
+
+    def _find_person(self, name: str, aliases: List[str]) -> Optional[int]:
         # 割り当て済みの名前は、後から別名で別の人物と結び付いても書き出し済みの音声と食い違わないよう元の人物のままにする
-        if narrator.name in self._name_persons:
-            return self._name_persons[narrator.name]
+        if name in self._name_persons:
+            return self._name_persons[name]
         # ファイルごとの抽出で正式名が揺れても、以前の別名や正式名と一致すれば同じ人物とみなす。
         # 汎用的な呼び名で別人と混同しないよう、別名同士の一致は使わない
-        if self._alias_persons.get(narrator.name) is not None:
-            return self._alias_persons[narrator.name]
-        return next((self._name_persons[a] for a in narrator.aliases if a.strip() and a in self._name_persons), None)
+        if self._alias_persons.get(name) is not None:
+            return self._alias_persons[name]
+        # 別名が複数の人物の正式名に一致する場合は、どの人物か決められないため新しい人物とする
+        candidates = {self._name_persons[a] for a in aliases if a in self._name_persons}
+        return candidates.pop() if len(candidates) == 1 else None
 
     def assign(self, narrator: Optional[Narrator]) -> str:
         # 名前のない登場人物は誰か区別できないため、ナレーターとして読む
-        if narrator is None or narrator.name == NARRATOR_NAME or not narrator.name.strip():
+        if narrator is None:
             return self.narrator_voice
+        name = self._key(narrator.name)
+        if name == NARRATOR_NAME or not name:
+            return self.narrator_voice
+        aliases = [a for a in (self._key(a) for a in narrator.aliases) if a]
 
-        person = self._find_person(narrator)
+        person = self._find_person(name, aliases)
         if person is None:
             pool = self.voices
             if narrator.gender is not None and len(self.gender_voices.get(narrator.gender, [])) > 0:
@@ -307,11 +347,9 @@ class VoiceAssigner:
             self._person_voices.append(voice)
 
         voice = self._person_voices[person]
-        self._name_persons[narrator.name] = person
-        self.assigned[narrator.name] = voice
-        for alias in narrator.aliases:
-            if not alias.strip():
-                continue
+        self._name_persons[name] = person
+        self.assigned[name] = voice
+        for alias in aliases:
             if alias not in self._alias_persons:
                 self._alias_persons[alias] = person
             elif self._alias_persons[alias] != person:
@@ -344,16 +382,29 @@ def _pack(pieces: List[str], max_chars: int) -> List[str]:
     return chunks
 
 
+def _clusters(text: str) -> List[str]:
+    """濁点などの結合文字を直前の文字と同じ単位にまとめる"""
+    clusters: List[str] = []
+    for char in text:
+        if clusters and unicodedata.category(char).startswith("M"):
+            clusters[-1] += char
+        else:
+            clusters.append(char)
+    return clusters
+
+
 def _split_by_length(text: str, max_chars: int) -> List[str]:
     """文字数で区切る。句読点や括弧などの記号はできるだけ直前の文字と同じ塊に入れ、記号だけの塊ができないようにする"""
-    units: List[str] = []
-    for char in text:
-        if units and (not is_readable(char) or not is_readable(units[-1])):
-            units[-1] += char
+    units: List[List[str]] = []
+    for cluster in _clusters(text):
+        if units and (not is_readable(cluster) or not is_readable("".join(units[-1]))):
+            units[-1].append(cluster)
         else:
-            units.append(char)
-    # 記号を含めた単位でも max_chars を超える場合は、上限を優先して単純に区切る
-    return [c[i:i + max_chars] for c in _pack(units, max_chars) for i in range(0, len(c), max_chars)]
+            units.append([cluster])
+    # 記号を含めた単位でも max_chars を超える場合は、上限を優先して結合文字の単位で区切る。
+    # 結合文字を含む1文字だけで max_chars を超える場合は、文字を壊さないよう区切らない
+    pieces = [piece for unit in units for piece in (_pack(unit, max_chars) if len("".join(unit)) > max_chars else ["".join(unit)])]
+    return _pack(pieces, max_chars)
 
 
 def split_for_tts(text: str, max_chars: int) -> List[str]:
@@ -440,10 +491,11 @@ def write_wav(path: Path, segments: List[Audio], pause: float = 0.0) -> None:
     # 途中で失敗しても書きかけのファイルが残らないよう、同じフォルダに一意な一時ファイルを作ってから置き換える
     path.parent.mkdir(parents = True, exist_ok = True)
     # 長いファイル名でも名前の長さの上限を超えないよう、一時ファイルの名前は出力名によらない短いものにする
-    with tempfile.NamedTemporaryFile(dir = path.parent, prefix = ".polynarrator-", suffix = ".wav.tmp", delete = False) as file:
-        temp = Path(file.name)
+    # 一時ファイルはパスで開き直さず、作成時に開いたファイルにそのまま書き込む
+    file = tempfile.NamedTemporaryFile(dir = path.parent, prefix = ".polynarrator-", suffix = ".wav.tmp", delete = False)
+    temp = Path(file.name)
     try:
-        with wave.open(str(temp), "wb") as wav:
+        with file, wave.open(file, "wb") as wav:
             wav.setframerate(first.rate)
             wav.setsampwidth(first.width)
             wav.setnchannels(first.channels)

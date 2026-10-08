@@ -434,3 +434,53 @@ def test_main_with_wyoming_client(monkeypatch, tmp_path, wyoming_server):
         ("花子:error", "ja-a", None),
     ]
     assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["1.wav", "2.wav"]
+
+
+# --- 終了コード ---
+# SystemExit に文字列を渡した場合、プロセスの終了コードは 1 になる
+
+def test_exit_code_success(monkeypatch, tmp_path):
+    run_main(monkeypatch, tmp_path, FakeClient())
+
+
+def test_exit_code_sentence_failure(monkeypatch, tmp_path):
+    with pytest.raises(SystemExit) as e:
+        run_main(monkeypatch, tmp_path, FakeClient(failing = ["次郎:え"]))
+    assert isinstance(e.value.code, str)
+
+
+def test_exit_code_fatal_error(monkeypatch, tmp_path):
+    with pytest.raises(SystemExit) as e:
+        run_main(monkeypatch, tmp_path, FakeClient(fatal = ["次郎:え"]))
+    assert isinstance(e.value.code, str) and "中断" in e.value.code
+
+
+def test_exit_code_argument_error(monkeypatch, tmp_path):
+    with pytest.raises(SystemExit) as e:
+        run_main(monkeypatch, tmp_path, FakeClient(), args = ["--tts-pause", "-1"])
+    assert e.value.code == 2
+
+
+def test_check_output_dir_rejects_symlink(tmp_path):
+    target = tmp_path / "elsewhere.wav"
+    target.write_bytes(b"")
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "1.wav").symlink_to(target)
+    with pytest.raises(SystemExit, match = "通常のファイル以外"):
+        main.check_output_dir(tmp_path / "out", ["1.txt"])
+
+
+def test_main_with_jev_speaker_backend(monkeypatch, tmp_path):
+    class FakeJev:
+        def __init__(self, api_key, model, base_url):
+            self.args = (api_key, model, base_url)
+
+        def set_estimation_narrator(self, novel, *args):
+            FakeAi(None, None, None).set_estimation_narrator(novel)
+
+    monkeypatch.setattr(main, "JevSpeakerEstimator", FakeJev)
+    assigner = VoiceAssigner(["n", "a", "b"])
+    client = FakeClient()
+    run_main(monkeypatch, tmp_path, client, assigner, args = ["--speaker-backend", "jev"])
+    assert assigner.assigned == {"ナレーター": "n", "田中花子": "a", "花子": "a", "次郎": "b"}
+    assert client.requests == ["あ", "田中花子:い", "花子:う", "次郎:え"]

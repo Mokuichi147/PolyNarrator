@@ -112,9 +112,10 @@ def check_output_dir(path: Path, files: List[str]) -> None:
     duplicates = sorted({str(p) for p, key in zip(outputs, keys) if keys.count(key) > 1})
     if len(duplicates) > 0:
         raise SystemExit(f"複数の入力ファイルの出力先が同じになります: {duplicates}")
-    conflicts = [str(p) for p in outputs if p.exists() and not p.is_file()]
+    # シンボリックリンクは置き換えるとリンク自体が通常のファイルに変わるため、通常のファイル以外は受け付けない
+    conflicts = [str(p) for p in outputs if p.is_symlink() or (p.exists() and not p.is_file())]
     if len(conflicts) > 0:
-        raise SystemExit(f"音声の出力先にファイル以外のものがあります: {conflicts}")
+        raise SystemExit(f"音声の出力先に通常のファイル以外のものがあります: {conflicts}")
 
 
 def load_novels(folder: str, files: List[str]) -> List[Novel]:
