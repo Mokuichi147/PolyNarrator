@@ -1,7 +1,7 @@
 [project]
 name = "polynarrator"
 version = "0.1.0"
-description = "Add your description here"
+description = "小説の登場人物ごとに声を変えて読み上げる"
 readme = "README.md"
 requires-python = ">=3.12.10"
 dependencies = [
