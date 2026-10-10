@@ -59,6 +59,11 @@ INFO = Info(tts = [TtsProgram(
 )])
 
 
+def response_key(text: str) -> str:
+    """応答を切り替えるキー。「名前:セリフ」の形式ではセリフ部分を使う"""
+    return text.rsplit(":", 1)[-1].removesuffix("」")
+
+
 @pytest.fixture
 def wyoming_server():
     state = {"describe": "info", "info": INFO, "requests": []}
@@ -74,8 +79,7 @@ def wyoming_server():
         elif event is not None and Synthesize.is_type(event.type):
             synthesize = Synthesize.from_event(event)
             state["requests"].append(synthesize)
-            # 「名前:セリフ」の形式ではセリフ部分で応答を切り替える
-            synthesize_text = synthesize.text.rsplit(":", 1)[-1]
+            synthesize_text = response_key(synthesize.text)
             if synthesize_text == "error":
                 await async_write_event(Error(text = "synthesis failed").event(), writer)
             elif synthesize_text == "empty":
@@ -136,8 +140,7 @@ def speech_server():
             statuses = {"bad": 400, "unprocessable": 422, "unauthorized": 401}
             if body["model"] == "unknown-model":
                 statuses = {body["input"]: 400}
-            # 「名前:セリフ」の形式ではセリフ部分で応答を切り替える
-            status = statuses.get(body["input"].rsplit(":", 1)[-1], 200)
+            status = statuses.get(response_key(body["input"]), 200)
             if status == 200:
                 payload, content_type = wav_bytes(frames = 0 if body["input"] == "zero" else 240), "audio/wav"
                 if body["input"] == "notwav":
