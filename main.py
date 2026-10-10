@@ -172,7 +172,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", default="1234")
-    parser.add_argument("--model", default="granite4:small-h")
+    parser.add_argument("--model", default="qwen3.8-flash-next-iq3_s")
     parser.add_argument("--speaker-backend", choices=["llm", "jev"], default="llm", help="話者推測に使うバックエンド")
     parser.add_argument("--jev-model", default=None, help="Jev互換モデル名(未指定時は TYPESAFE_DEFAULT_MODEL または jev-latest)")
     parser.add_argument("--jev-base-url", default=None, help="Jev互換APIのURL(未指定時は TYPESAFE_BASE_URL または https://api.typesafe.ai)")
