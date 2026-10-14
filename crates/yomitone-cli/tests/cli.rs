@@ -1,4 +1,4 @@
-#[path = "../../polynarrator/tests/support/mod.rs"]
+#[path = "../../yomitone/tests/support/mod.rs"]
 mod support;
 
 use std::cell::{Cell, RefCell};
@@ -9,20 +9,20 @@ use std::process::Command;
 use std::rc::Rc;
 
 use clap::Parser;
-use polynarrator::adapters::wav::WavDirectory;
-use polynarrator::application::narrate_novels::NarrationError;
-use polynarrator::application::ports::*;
-use polynarrator::application::speech_synthesis::{AudioExporter, SentenceSynthesizer};
-use polynarrator::domain::audio::Audio;
-use polynarrator::domain::character::Character;
-use polynarrator::domain::novel::{Novel, Sentence};
-use polynarrator::domain::voice_assigner::VoiceAssigner;
-use polynarrator_cli::*;
 use serde_json::{json, Value};
 use support::*;
+use yomitone::adapters::wav::WavDirectory;
+use yomitone::application::narrate_novels::NarrationError;
+use yomitone::application::ports::*;
+use yomitone::application::speech_synthesis::{AudioExporter, SentenceSynthesizer};
+use yomitone::domain::audio::Audio;
+use yomitone::domain::character::Character;
+use yomitone::domain::novel::{Novel, Sentence};
+use yomitone::domain::voice_assigner::VoiceAssigner;
+use yomitone_cli::*;
 
 fn parse(args: &[&str]) -> Result<Args, clap::Error> {
-    Args::try_parse_from(["polynarrator"].iter().chain(args).chain(&["data"]))
+    Args::try_parse_from(["yomitone"].iter().chain(args).chain(&["data"]))
 }
 
 // --- CLI引数 ---
@@ -447,7 +447,7 @@ impl Workspace {
     fn args(&self, extra: &[&str]) -> Args {
         let out = self.out().display().to_string();
         let data = self.data().display().to_string();
-        let args: Vec<&str> = ["polynarrator", "--tts-output", &out, "--tts-pause", "0"]
+        let args: Vec<&str> = ["yomitone", "--tts-output", &out, "--tts-pause", "0"]
             .iter()
             .chain(extra)
             .copied()
@@ -553,7 +553,7 @@ fn main_checks_input_folder_before_creating_output() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing");
     let args = Args::try_parse_from([
-        "polynarrator",
+        "yomitone",
         "--tts-output",
         &missing.join("out").display().to_string(),
         &missing.display().to_string(),
@@ -680,7 +680,7 @@ impl SpeakerEstimator for FailingEstimator {
 // --- 終了コード ---
 
 fn exit_code(args: &[&str]) -> Option<i32> {
-    Command::new(env!("CARGO_BIN_EXE_polynarrator")).args(args).output().unwrap().status.code()
+    Command::new(env!("CARGO_BIN_EXE_yomitone")).args(args).output().unwrap().status.code()
 }
 
 #[test]

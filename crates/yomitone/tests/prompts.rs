@@ -3,13 +3,13 @@
 
 mod support;
 
-use polynarrator::adapters::jev::JevSpeakerEstimator;
-use polynarrator::adapters::llm::OpenAiChatModel;
-use polynarrator::application::ports::{CharacterExtractor, SpeakerEstimator, SpeakerGuess};
-use polynarrator::domain::character::{Character, Gender};
-use polynarrator::domain::novel::{Novel, Sentence};
 use serde_json::{json, Value};
 use support::{http_server, HttpResponse};
+use yomitone::adapters::jev::JevSpeakerEstimator;
+use yomitone::adapters::llm::OpenAiChatModel;
+use yomitone::application::ports::{CharacterExtractor, SpeakerEstimator, SpeakerGuess};
+use yomitone::domain::character::{Character, Gender};
+use yomitone::domain::novel::{Novel, Sentence};
 
 fn reply(request: &support::HttpRequest) -> HttpResponse {
     let body = if request.path.ends_with("/chat/completions") {

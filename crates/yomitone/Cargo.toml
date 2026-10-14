@@ -1,5 +1,5 @@
 [package]
-name = "polynarrator"
+name = "yomitone"
 description = "小説の登場人物ごとに声を変えて読み上げる (コア機能)"
 version.workspace = true
 edition.workspace = true

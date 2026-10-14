@@ -159,7 +159,7 @@ pub fn write_wav(path: &Path, segments: &[Audio], pause: f64) -> Result<(), Writ
         _ => Path::new("."),
     };
     fs::create_dir_all(directory)?;
-    let temp = tempfile::Builder::new().prefix(".polynarrator-").suffix(".wav.tmp").tempfile_in(directory)?;
+    let temp = tempfile::Builder::new().prefix(".yomitone-").suffix(".wav.tmp").tempfile_in(directory)?;
     {
         let mut out = BufWriter::new(temp.as_file());
         write_header(&mut out, first, 0)?;

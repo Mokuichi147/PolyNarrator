@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 use clap::Parser;
-use polynarrator_cli::{run, Args, Factories};
+use yomitone_cli::{run, Args, Factories};
 
 fn main() -> ExitCode {
     let args = Args::parse();

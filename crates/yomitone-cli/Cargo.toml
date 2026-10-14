@@ -1,5 +1,5 @@
 [package]
-name = "polynarrator-cli"
+name = "yomitone-cli"
 description = "小説の登場人物ごとに声を変えて読み上げる (コマンドライン)"
 version.workspace = true
 edition.workspace = true
@@ -7,16 +7,16 @@ rust-version.workspace = true
 publish = false
 
 [lib]
-name = "polynarrator_cli"
+name = "yomitone_cli"
 
 [[bin]]
-name = "polynarrator"
+name = "yomitone"
 path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 indexmap = "2"
-polynarrator.workspace = true
+yomitone.workspace = true
 
 [dev-dependencies]
 serde_json = "1"

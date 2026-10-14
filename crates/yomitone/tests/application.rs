@@ -3,14 +3,14 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use indexmap::IndexMap;
-use polynarrator::application::narrate_novels::{Chapter, NarrateNovels, NarrationError};
-use polynarrator::application::ports::*;
-use polynarrator::application::speaker_estimation::SpeakerEstimation;
-use polynarrator::application::speech_synthesis::{AudioExporter, SentenceSynthesizer, MAX_CONSECUTIVE_FAILURES};
-use polynarrator::domain::audio::Audio;
-use polynarrator::domain::character::Character;
-use polynarrator::domain::novel::{Novel, Sentence};
-use polynarrator::domain::voice_assigner::VoiceAssigner;
+use yomitone::application::narrate_novels::{Chapter, NarrateNovels, NarrationError};
+use yomitone::application::ports::*;
+use yomitone::application::speaker_estimation::SpeakerEstimation;
+use yomitone::application::speech_synthesis::{AudioExporter, SentenceSynthesizer, MAX_CONSECUTIVE_FAILURES};
+use yomitone::domain::audio::Audio;
+use yomitone::domain::character::Character;
+use yomitone::domain::novel::{Novel, Sentence};
+use yomitone::domain::voice_assigner::VoiceAssigner;
 
 fn character(name: &str) -> Character {
     Character::new(name, "")

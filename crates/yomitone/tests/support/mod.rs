@@ -37,7 +37,7 @@ pub fn wav_bytes(rate: u32, frames: usize) -> Vec<u8> {
 /// WAV の (rate, width, channels, data)
 pub fn read_wav_file(path: &std::path::Path) -> (u32, u16, u16, Vec<u8>) {
     let content = std::fs::read(path).unwrap();
-    let audio = polynarrator::adapters::wav::read_wav(&content).unwrap();
+    let audio = yomitone::adapters::wav::read_wav(&content).unwrap();
     (audio.rate, audio.width, audio.channels, audio.data)
 }
 

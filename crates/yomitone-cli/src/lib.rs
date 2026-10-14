@@ -7,17 +7,17 @@ use std::path::Path;
 use std::rc::Rc;
 
 use clap::CommandFactory;
-use polynarrator::adapters::jev::JevSpeakerEstimator;
-use polynarrator::adapters::llm::OpenAiChatModel;
-use polynarrator::adapters::openai_speech::OpenAiSpeechClient;
-use polynarrator::adapters::text_files::{list_text_files, read_novel};
-use polynarrator::adapters::wav::WavDirectory;
-use polynarrator::adapters::wyoming::WyomingClient;
-use polynarrator::application::narrate_novels::{Chapter, NarrateNovels, NarrationError};
-use polynarrator::application::ports::{CharacterExtractor, Presenter, SpeakerEstimator, SpeechSynthesizer};
-use polynarrator::application::speaker_estimation::SpeakerEstimation;
-use polynarrator::application::speech_synthesis::{AudioExporter, SentenceSynthesizer};
-use polynarrator::domain::voice_assigner::VoiceAssigner;
+use yomitone::adapters::jev::JevSpeakerEstimator;
+use yomitone::adapters::llm::OpenAiChatModel;
+use yomitone::adapters::openai_speech::OpenAiSpeechClient;
+use yomitone::adapters::text_files::{list_text_files, read_novel};
+use yomitone::adapters::wav::WavDirectory;
+use yomitone::adapters::wyoming::WyomingClient;
+use yomitone::application::narrate_novels::{Chapter, NarrateNovels, NarrationError};
+use yomitone::application::ports::{CharacterExtractor, Presenter, SpeakerEstimator, SpeechSynthesizer};
+use yomitone::application::speaker_estimation::SpeakerEstimation;
+use yomitone::application::speech_synthesis::{AudioExporter, SentenceSynthesizer};
+use yomitone::domain::voice_assigner::VoiceAssigner;
 
 pub use crate::args::{Args, SpeakerBackend, TtsBackend, MAX_PAUSE};
 pub use crate::console::ConsolePresenter;
