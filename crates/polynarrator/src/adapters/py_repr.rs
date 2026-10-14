@@ -1,4 +1,4 @@
-//! LLM へのプロンプトを Python 版と同じ文字列にするため、Python の repr と同じ表記を作る
+//! LLM へのプロンプトを移植前の Python 版と同じ文字列にするため、Python の repr と同じ表記を作る
 
 use std::fmt::Write;
 
@@ -48,7 +48,7 @@ pub fn list_repr(items: &[String]) -> String {
     format!("[{}]", items.iter().map(|s| str_repr(s)).collect::<Vec<_>>().join(", "))
 }
 
-/// Python 版の Gender 列挙型を文字列にしたときの表記
+/// 移植前の Python 版の Gender 列挙型を文字列にしたときの表記
 pub fn gender_repr(gender: Option<Gender>) -> &'static str {
     match gender {
         Some(Gender::Male) => "Gender.MALE",

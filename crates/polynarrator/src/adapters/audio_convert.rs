@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn converts_width_and_channels() {
         let mut converter = AudioConverter::new(8000, 1, 1);
-        // Python 版と同じく、8bit 符号なしに変えてからモノラルにまとめる
+        // 移植前の Python 版と同じく、8bit 符号なしに変えてからモノラルにまとめる
         let audio = converter.convert(&Audio::new(8000, 2, 2, vec![0x00, 0x01, 0x00, 0x01]));
         assert_eq!(audio.data, vec![0x80]);
         let mut converter = AudioConverter::new(8000, 2, 2);

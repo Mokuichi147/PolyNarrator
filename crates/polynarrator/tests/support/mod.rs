@@ -1,4 +1,4 @@
-//! テスト用のサーバー。Python 版のテスト (conftest.py) と同じ応答を返す
+//! テスト用のサーバー。移植前の Python 版のテストと同じ応答を返す
 
 #![allow(dead_code)]
 

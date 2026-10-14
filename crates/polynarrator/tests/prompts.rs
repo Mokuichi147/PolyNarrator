@@ -1,5 +1,5 @@
-//! LLM・Jev 互換 API へ送る要求本文が Python 版と同じであることを確かめる。
-//! 期待値は fixtures/generate_python_requests.py で Python 版から作ったもの
+//! LLM・Jev 互換 API へ送る要求本文が、移植前の Python 版と同じであることを確かめる。
+//! 期待値は Python 版が同じ入力で実際に送った要求本文
 
 mod support;
 

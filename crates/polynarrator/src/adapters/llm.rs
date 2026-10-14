@@ -12,7 +12,7 @@ use crate::application::ports::{CharacterExtractor, EstimationError, ExtractionE
 use crate::domain::character::{Character, Gender};
 use crate::domain::novel::{Novel, Sentence};
 
-// 応答のスキーマはプロンプトにも含めるため、Python 版の pydantic が作るものと同じ内容・表記にする。
+// 応答のスキーマはプロンプトにも含めるため、移植前の Python 版で pydantic が作っていたものと同じ内容・表記にする。
 // 変えるとモデルへの入力が変わる
 
 /// Narrators のスキーマを Python の dict として文字列にしたもの
@@ -196,7 +196,7 @@ impl SpeakerEstimator for OpenAiChatModel {
             })
             .collect();
         let upcoming: Vec<&str> = following.iter().map(|s| s.text.as_str()).collect();
-        // モデルへの入力を変えないよう、行頭の字下げも含めて Python 版と同じ文字列にする
+        // モデルへの入力を変えないよう、行頭の字下げも含めて移植前の Python 版と同じ文字列にする
         let indent = " ".repeat(20);
         let content = format!(
             "\n{indent}今までの内容:\n{indent}{}\n\n{indent}推測したいセリフの内容:\n{indent}{}\n\n{indent}後の内容:\n{indent}{}\n{indent}",
