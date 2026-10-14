@@ -13,15 +13,18 @@ use naui::{CloseResponse, GridCell, Result, SidebarItem, SidebarSection, Toolbar
 
 use self::parts::scrollable;
 use self::store::Store;
+use crate::settings::{SpeakerBackend, TtsBackendSetting};
 
 /// サイドバーの項目。並びは画面の並びと同じで、通知される通し番号をそのまま画面の位置に使う
 const MAIN_PAGES: [(&str, ToolbarIcon); 2] = [("読み上げ", ToolbarIcon::Open), ("結果", ToolbarIcon::Info)];
 const SETTINGS_PAGES: [(&str, ToolbarIcon); 4] = [
-    ("LLM サーバー", ToolbarIcon::Settings),
-    ("話者推測", ToolbarIcon::Search),
-    ("音声合成", ToolbarIcon::Share),
-    ("声の割り当て", ToolbarIcon::Edit),
+    (SpeakerBackend::Llm.page_title(), ToolbarIcon::Settings),
+    (SpeakerBackend::Jev.page_title(), ToolbarIcon::Search),
+    (TtsBackendSetting::Openai.page_title(), ToolbarIcon::Share),
+    (TtsBackendSetting::Wyoming.page_title(), ToolbarIcon::Share),
 ];
+/// 項目名が省略されずに収まる幅
+const SIDEBAR_WIDTH: f64 = 250.0;
 
 fn sidebar_sections() -> Vec<SidebarSection> {
     let items = |pages: &[(&str, ToolbarIcon)]| {
@@ -46,13 +49,14 @@ pub fn build(ui: &Ui) -> Result<()> {
         Box::new(run),
         Box::new(scrollable(ui, &results)?),
         Box::new(scrollable(ui, &settings_pages::llm(ui, &store)?)?),
-        Box::new(scrollable(ui, &settings_pages::speaker(ui, &store)?)?),
-        Box::new(scrollable(ui, &settings_pages::tts(ui, &store)?)?),
-        Box::new(scrollable(ui, &settings_pages::voices(ui, &store)?)?),
+        Box::new(scrollable(ui, &settings_pages::jev(ui, &store)?)?),
+        Box::new(scrollable(ui, &settings_pages::tts(ui, &store, TtsBackendSetting::Openai)?)?),
+        Box::new(scrollable(ui, &settings_pages::tts(ui, &store, TtsBackendSetting::Wyoming)?)?),
     ];
 
     let sidebar = ui.sidebar()?;
     sidebar.set_sections(&sidebar_sections());
+    sidebar.set_width(SIDEBAR_WIDTH);
     let go = Rc::new({
         let root = root.clone();
         let sidebar = sidebar.clone();

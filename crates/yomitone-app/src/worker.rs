@@ -13,7 +13,7 @@ use yomitone::domain::character::Character;
 use yomitone::domain::novel::Sentence;
 use yomitone::setup::{self, SetupError};
 
-use crate::settings::{AppSettings, SpeakerBackend};
+use crate::settings::{AppSettings, SpeakerBackend, TtsBackendSetting};
 
 /// 処理の経過。送った順に画面へ届く
 #[derive(Debug, Clone, PartialEq)]
@@ -53,15 +53,14 @@ pub enum Outcome {
     Failed(String),
 }
 
-/// 設定の問題を、画面のどこを直せばよいか分かるメッセージにする
-pub fn describe_setup_error(error: &SetupError) -> String {
+/// 設定の問題を、画面のどこを直せばよいか分かるメッセージにする。tts は音声合成に使う TTS
+pub fn describe_setup_error(error: &SetupError, tts: TtsBackendSetting) -> String {
+    let page = tts.page_title();
     match error {
-        SetupError::NoServerVoices => {
-            format!("{error}。「声の割り当て」の使用する音声か、「音声合成」の言語を確認してください")
-        }
-        SetupError::VoicesRequired => "「声の割り当て」で使用する音声を指定してください".into(),
-        SetupError::Assigner(_) => format!("{error}。「声の割り当て」の使用する音声に含まれる音声を指定してください"),
-        SetupError::Jev(_) => format!("{error}。「話者推測」で API キーを入力してください"),
+        SetupError::NoServerVoices => format!("{error}。「{page}」の使用する音声か言語を確認してください"),
+        SetupError::VoicesRequired => format!("「{page}」で使用する音声を指定してください"),
+        SetupError::Assigner(_) => format!("{error}。「{page}」の使用する音声に含まれる音声を指定してください"),
+        SetupError::Jev(_) => format!("{error}。「{}」で API キーを入力してください", SpeakerBackend::Jev.page_title()),
         _ => error.to_string(),
     }
 }
@@ -145,14 +144,14 @@ impl<F: Fn(Event)> Presenter for EventPresenter<F> {
 
 fn narrate(settings: &AppSettings, cancel: CancelFlag, send: impl Fn(Event) + 'static) -> Result<Outcome, String> {
     settings.validate()?;
-    let describe = |e: SetupError| describe_setup_error(&e);
+    let describe = |e: SetupError| describe_setup_error(&e, settings.tts_backend);
     let mut chapters = setup::load_chapters(Path::new(settings.input_folder.trim())).map_err(describe)?;
     if chapters.is_empty() {
         return Err(format!("入力フォルダに .txt ファイルがありません({})", settings.input_folder.trim()));
     }
     let writer = if settings.export_audio {
         Some(
-            setup::prepare_output(Path::new(settings.output_folder.trim()), settings.tts_pause, &chapters)
+            setup::prepare_output(Path::new(settings.output_folder.trim()), settings.selected_tts().pause, &chapters)
                 .map_err(describe)?,
         )
     } else {
@@ -172,7 +171,8 @@ fn narrate(settings: &AppSettings, cancel: CancelFlag, send: impl Fn(Event) + 's
         Some(writer) => {
             let options = settings.tts_options();
             let (client, assigner) = setup::create_tts(&options).map_err(describe)?;
-            let synthesizer = SentenceSynthesizer::new(client, assigner, presenter.clone(), settings.tts_max_chars);
+            let synthesizer =
+                SentenceSynthesizer::new(client, assigner, presenter.clone(), settings.selected_tts().max_chars);
             Some(AudioExporter::new(synthesizer, Box::new(writer), presenter.clone()))
         }
     };
