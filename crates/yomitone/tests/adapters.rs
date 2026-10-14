@@ -4,18 +4,18 @@ use std::fs;
 use std::path::Path;
 use std::rc::Rc;
 
-use polynarrator::adapters::openai_speech::OpenAiSpeechClient;
-use polynarrator::adapters::text_files::{list_text_files, read_novel};
-use polynarrator::adapters::wav::{wav_data_size, write_wav, WavDirectory, WriteWavError};
-use polynarrator::adapters::wyoming::WyomingClient;
-use polynarrator::application::narrate_novels::NarrationError;
-use polynarrator::application::ports::{AudioWriter, SilentPresenter, SpeechSynthesizer, TtsError};
-use polynarrator::application::speech_synthesis::SentenceSynthesizer;
-use polynarrator::domain::audio::Audio;
-use polynarrator::domain::novel::Sentence;
-use polynarrator::domain::voice_assigner::VoiceAssigner;
 use serde_json::{json, Value};
 use support::*;
+use yomitone::adapters::openai_speech::OpenAiSpeechClient;
+use yomitone::adapters::text_files::{list_text_files, read_novel};
+use yomitone::adapters::wav::{wav_data_size, write_wav, WavDirectory, WriteWavError};
+use yomitone::adapters::wyoming::WyomingClient;
+use yomitone::application::narrate_novels::NarrationError;
+use yomitone::application::ports::{AudioWriter, SilentPresenter, SpeechSynthesizer, TtsError};
+use yomitone::application::speech_synthesis::SentenceSynthesizer;
+use yomitone::domain::audio::Audio;
+use yomitone::domain::novel::Sentence;
+use yomitone::domain::voice_assigner::VoiceAssigner;
 
 fn pcm(rate: u32, frames: usize, value: i16) -> Audio {
     Audio::new(rate, 2, 1, value.to_le_bytes().repeat(frames))

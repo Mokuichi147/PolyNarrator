@@ -1,7 +1,7 @@
-use polynarrator::domain::character::{Character, Gender};
-use polynarrator::domain::novel::{Novel, Sentence};
-use polynarrator::domain::text::{is_readable, split_for_tts};
-use polynarrator::domain::voice_assigner::{VoiceAssigner, VoiceAssignerError};
+use yomitone::domain::character::{Character, Gender};
+use yomitone::domain::novel::{Novel, Sentence};
+use yomitone::domain::text::{is_readable, split_for_tts};
+use yomitone::domain::voice_assigner::{VoiceAssigner, VoiceAssignerError};
 
 fn character(name: &str) -> Character {
     Character::new(name, "")

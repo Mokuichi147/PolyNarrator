@@ -2,9 +2,9 @@ use std::cell::RefCell;
 use std::io::{self, Write};
 
 use indexmap::IndexMap;
-use polynarrator::application::ports::{Presenter, SynthesisResult};
-use polynarrator::domain::character::Character;
-use polynarrator::domain::novel::Sentence;
+use yomitone::application::ports::{Presenter, SynthesisResult};
+use yomitone::domain::character::Character;
+use yomitone::domain::novel::Sentence;
 
 fn speaker_name(sentence: &Sentence) -> &str {
     sentence.speaker.as_ref().map(|s| s.name.as_str()).unwrap_or_default()

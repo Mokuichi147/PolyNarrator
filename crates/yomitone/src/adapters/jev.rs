@@ -245,7 +245,7 @@ impl SpeakerEstimator for JevSpeakerEstimator {
         });
 
         let url = format!("{}{SYSTEM_ONE_PATH}", self.base_url);
-        let user_agent = format!("polynarrator/{}", env!("CARGO_PKG_VERSION"));
+        let user_agent = format!("yomitone/{}", env!("CARGO_PKG_VERSION"));
         let authorization = format!("Bearer {}", self.api_key);
         let request = |attempt: u32| {
             let request = self
