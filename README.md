@@ -8,7 +8,7 @@
 
 ## 必要なもの
 
-- Python 3.12.10 以上と [uv](https://docs.astral.sh/uv/)
+- Python 3.12.10 以上と [uv](https://docs.astral.sh/uv/)、または Rust 1.82 以上(Rust 版を使う場合)
 - OpenAI API 互換の LLM サーバー(JSON Schema による構造化出力に対応したモデル)
 - 音声を書き出す場合: OpenAI 互換の `/v1/audio/speech` または Wyoming プロトコルに対応した TTS サーバー
 
@@ -91,8 +91,33 @@ uv run main.py --speaker-backend jev --jev-api-key <API キー> data/
 
 </details>
 
+## Rust 版
+
+同じ機能を Rust に移植したコマンド `polynarrator` もあります。オプションは Python 版と同じで、LLM に送るプロンプトも同じ文字列です。
+
+```bash
+cargo build --release
+./target/release/polynarrator --host localhost --port 1234 --tts-output out/ --tts-backend wyoming data/
+```
+
+ビルドせずに `cargo run --release -p polynarrator-cli -- <オプション> data/` でも実行できます。
+
+挙動が Python 版と異なるのは次の点です。
+
+- 経過の表示で、性別を `男性` / `女性` / `不明` と表示します。
+- 登場人物の抽出で入力長を超えた章は、以前の登場人物一覧のまま続行します(Python 版は異常終了します)。
+- LLM サーバーに接続できない場合は、メッセージを表示して終了コード 1 で終了します。
+
+| クレート | 内容 |
+| --- | --- |
+| `crates/polynarrator` | domain / application / adapters (コア機能) |
+| `crates/polynarrator-cli` | コマンドライン引数から各層を組み立てて実行する |
+
 ## テスト
 
 ```bash
 uv run pytest
+cargo test
 ```
+
+`crates/polynarrator/tests/fixtures/python_requests.json` は、Python 版が LLM・Jev 互換 API へ送る要求本文です。プロンプトを変えた場合は、同じフォルダの `generate_python_requests.py` で作り直してください。
