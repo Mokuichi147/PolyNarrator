@@ -59,17 +59,21 @@ fn read_error_body(response: ureq::Response) -> String {
     String::from_utf8_lossy(&body).into_owned()
 }
 
-/// JSON の本文を送り、失敗した送信を方針に従って再試行する。
+/// 送信し、失敗した送信を方針に従って再試行する。body があれば JSON の本文として送る。
 /// request は送信のたびに呼ばれ、引数は何回目の再試行か(最初は 0)
 pub fn send_with_retry(
     policy: &RetryPolicy,
     mut request: impl FnMut(u32) -> ureq::Request,
-    body: &serde_json::Value,
+    body: Option<&serde_json::Value>,
 ) -> Result<ureq::Response, HttpFailure> {
     let started = Instant::now();
     let mut attempt = 0;
     loop {
-        let (failure, server_delay) = match request(attempt).send_json(body) {
+        let sent = match body {
+            Some(body) => request(attempt).send_json(body),
+            None => request(attempt).call(),
+        };
+        let (failure, server_delay) = match sent {
             Ok(response) => return Ok(response),
             Err(ureq::Error::Status(status, response)) => {
                 let delay = retry_after(&response);

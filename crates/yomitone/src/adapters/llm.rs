@@ -84,6 +84,9 @@ pub fn parse_json<T: DeserializeOwned>(data: &str) -> Result<T, serde_json::Erro
     })
 }
 
+/// LM Studio などキーを確かめないサーバー向けの、ダミーの API キー
+const AUTHORIZATION: &str = "Bearer lm-studio";
+
 enum ChatError {
     ContextTooLong(String),
     Fatal(String),
@@ -107,6 +110,25 @@ impl OpenAiChatModel {
         Self { agent, base_url: format!("http://{host}:{port}/v1"), model: model.to_string() }
     }
 
+    /// 接続先の URL (http://<ホスト>:<ポート>/v1)
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// サーバーで使えるモデルの名前 (GET /v1/models)
+    pub fn list_models(&self) -> Result<Vec<String>, String> {
+        let url = format!("{}/models", self.base_url);
+        let response =
+            send_with_retry(&OPENAI_RETRY, |_| self.agent.get(&url).set("Authorization", AUTHORIZATION), None)
+                .map_err(|failure| openai_error_message(&failure))?;
+        let response: Value = response.into_json().map_err(|e| format!("モデルの一覧を読めませんでした: {e}"))?;
+        let models = response
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("モデルの一覧に data がありません: {response}"))?;
+        Ok(models.iter().filter_map(|m| m.get("id").and_then(Value::as_str)).map(str::to_string).collect())
+    }
+
     fn chat(&self, messages: Value, schema_json: &str) -> Result<Option<String>, ChatError> {
         let schema: Value = serde_json::from_str(schema_json).expect("スキーマは正しい JSON");
         let name = schema.get("title").and_then(Value::as_str).unwrap_or("response").to_string();
@@ -120,16 +142,16 @@ impl OpenAiChatModel {
         });
         let url = format!("{}/chat/completions", self.base_url);
         let response =
-            send_with_retry(&OPENAI_RETRY, |_| self.agent.post(&url).set("Authorization", "Bearer lm-studio"), &body)
+            send_with_retry(&OPENAI_RETRY, |_| self.agent.post(&url).set("Authorization", AUTHORIZATION), Some(&body))
                 .map_err(|failure| {
-                let message = openai_error_message(&failure);
-                match failure {
-                    HttpFailure::Status { status: 400, .. } if message.to_lowercase().contains("context") => {
-                        ChatError::ContextTooLong(message)
+                    let message = openai_error_message(&failure);
+                    match failure {
+                        HttpFailure::Status { status: 400, .. } if message.to_lowercase().contains("context") => {
+                            ChatError::ContextTooLong(message)
+                        }
+                        _ => ChatError::Fatal(message),
                     }
-                    _ => ChatError::Fatal(message),
-                }
-            })?;
+                })?;
         let response: Value =
             response.into_json().map_err(|e| ChatError::Fatal(format!("LLMサーバーの応答を読めませんでした: {e}")))?;
         let message = response

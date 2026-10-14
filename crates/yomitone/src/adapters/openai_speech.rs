@@ -76,7 +76,7 @@ impl SpeechSynthesizer for OpenAiSpeechClient {
         let body = json!({"input": text, "model": self.model, "voice": voice, "response_format": "wav"});
         let authorization = format!("Bearer {}", self.api_key);
         let response =
-            send_with_retry(&OPENAI_RETRY, |_| self.agent.post(&url).set("Authorization", &authorization), &body)
+            send_with_retry(&OPENAI_RETRY, |_| self.agent.post(&url).set("Authorization", &authorization), Some(&body))
                 .map_err(|failure| {
                     let message = openai_error_message(&failure);
                     match failure {
