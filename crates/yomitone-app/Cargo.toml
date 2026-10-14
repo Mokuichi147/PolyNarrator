@@ -1,0 +1,26 @@
+[package]
+name = "yomitone-app"
+description = "小説の登場人物ごとに声を変えて読み上げる (デスクトップアプリ)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "yomitone_app"
+
+[[bin]]
+name = "yomitone-app"
+path = "src/main.rs"
+
+[dependencies]
+dirs = "6"
+indexmap = "2"
+naui = "0.9.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+yomitone.workspace = true
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
