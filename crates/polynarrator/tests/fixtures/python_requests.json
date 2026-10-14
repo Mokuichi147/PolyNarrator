@@ -1,0 +1,327 @@
+[
+  {
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "ユーザーから与えられた小説の内容から登場人物を全て抽出し、指定されたJsonフォーマットで返答してください。同一の人物や一覧内で命名の揺れがないこと。今までの登場人物一覧が与え得られた場合は、内容を適宜更新すること。\nレスポンスフォーマット:\n{'$defs': {'Gender': {'enum': ['男性', '女性', 'その他'], 'title': 'Gender', 'type': 'string'}, 'Narrator': {'description': '登場人物の情報。これらの情報を元に会話内容の発言者を推測する', 'properties': {'name': {'description': 'キャラクター名。正式名称であることが好ましい', 'title': 'Name', 'type': 'string'}, 'portrait': {'description': '性格や来歴、外見といったキャラクターの特徴', 'title': 'Portrait', 'type': 'string'}, 'aliases': {'default': [], 'description': 'ニックネームや別称など', 'items': {'type': 'string'}, 'title': 'Aliases', 'type': 'array'}, 'gender': {'anyOf': [{'$ref': '#/$defs/Gender'}, {'type': 'null'}], 'default': None, 'description': '性別'}}, 'required': ['name', 'portrait'], 'title': 'Narrator', 'type': 'object'}}, 'description': '登場人物のリスト', 'properties': {'narrators': {'items': {'$ref': '#/$defs/Narrator'}, 'title': 'Narrators', 'type': 'array'}}, 'required': ['narrators'], 'title': 'Narrators', 'type': 'object'}"
+        },
+        {
+          "role": "user",
+          "content": "\n小説の内容:\n地の文です。\n「こんにちは」\n\n「やあ」"
+        }
+      ],
+      "model": "test-model",
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "Narrators",
+          "schema": {
+            "$defs": {
+              "Gender": {
+                "enum": [
+                  "男性",
+                  "女性",
+                  "その他"
+                ],
+                "title": "Gender",
+                "type": "string"
+              },
+              "Narrator": {
+                "description": "登場人物の情報。これらの情報を元に会話内容の発言者を推測する",
+                "properties": {
+                  "name": {
+                    "description": "キャラクター名。正式名称であることが好ましい",
+                    "title": "Name",
+                    "type": "string"
+                  },
+                  "portrait": {
+                    "description": "性格や来歴、外見といったキャラクターの特徴",
+                    "title": "Portrait",
+                    "type": "string"
+                  },
+                  "aliases": {
+                    "default": [],
+                    "description": "ニックネームや別称など",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "Aliases",
+                    "type": "array"
+                  },
+                  "gender": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/Gender"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "性別"
+                  }
+                },
+                "required": [
+                  "name",
+                  "portrait"
+                ],
+                "title": "Narrator",
+                "type": "object"
+              }
+            },
+            "description": "登場人物のリスト",
+            "properties": {
+              "narrators": {
+                "items": {
+                  "$ref": "#/$defs/Narrator"
+                },
+                "title": "Narrators",
+                "type": "array"
+              }
+            },
+            "required": [
+              "narrators"
+            ],
+            "title": "Narrators",
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  {
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "ユーザーから与えられた小説の内容から登場人物を全て抽出し、指定されたJsonフォーマットで返答してください。同一の人物や一覧内で命名の揺れがないこと。今までの登場人物一覧が与え得られた場合は、内容を適宜更新すること。\nレスポンスフォーマット:\n{'$defs': {'Gender': {'enum': ['男性', '女性', 'その他'], 'title': 'Gender', 'type': 'string'}, 'Narrator': {'description': '登場人物の情報。これらの情報を元に会話内容の発言者を推測する', 'properties': {'name': {'description': 'キャラクター名。正式名称であることが好ましい', 'title': 'Name', 'type': 'string'}, 'portrait': {'description': '性格や来歴、外見といったキャラクターの特徴', 'title': 'Portrait', 'type': 'string'}, 'aliases': {'default': [], 'description': 'ニックネームや別称など', 'items': {'type': 'string'}, 'title': 'Aliases', 'type': 'array'}, 'gender': {'anyOf': [{'$ref': '#/$defs/Gender'}, {'type': 'null'}], 'default': None, 'description': '性別'}}, 'required': ['name', 'portrait'], 'title': 'Narrator', 'type': 'object'}}, 'description': '登場人物のリスト', 'properties': {'narrators': {'items': {'$ref': '#/$defs/Narrator'}, 'title': 'Narrators', 'type': 'array'}}, 'required': ['narrators'], 'title': 'Narrators', 'type': 'object'}"
+        },
+        {
+          "role": "user",
+          "content": "今までの登場人物一覧:\n- 田中花子 (Gender.FEMALE)\n- 太郎 (None)"
+        },
+        {
+          "role": "user",
+          "content": "\n小説の内容:\n地の文です。\n「こんにちは」\n\n「やあ」"
+        }
+      ],
+      "model": "test-model",
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "Narrators",
+          "schema": {
+            "$defs": {
+              "Gender": {
+                "enum": [
+                  "男性",
+                  "女性",
+                  "その他"
+                ],
+                "title": "Gender",
+                "type": "string"
+              },
+              "Narrator": {
+                "description": "登場人物の情報。これらの情報を元に会話内容の発言者を推測する",
+                "properties": {
+                  "name": {
+                    "description": "キャラクター名。正式名称であることが好ましい",
+                    "title": "Name",
+                    "type": "string"
+                  },
+                  "portrait": {
+                    "description": "性格や来歴、外見といったキャラクターの特徴",
+                    "title": "Portrait",
+                    "type": "string"
+                  },
+                  "aliases": {
+                    "default": [],
+                    "description": "ニックネームや別称など",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "Aliases",
+                    "type": "array"
+                  },
+                  "gender": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/Gender"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "性別"
+                  }
+                },
+                "required": [
+                  "name",
+                  "portrait"
+                ],
+                "title": "Narrator",
+                "type": "object"
+              }
+            },
+            "description": "登場人物のリスト",
+            "properties": {
+              "narrators": {
+                "items": {
+                  "$ref": "#/$defs/Narrator"
+                },
+                "title": "Narrators",
+                "type": "array"
+              }
+            },
+            "required": [
+              "narrators"
+            ],
+            "title": "Narrators",
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  {
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "会話の内容から指定されたセリフがどの登場人物による発言かを推測し、指定されたJsonフォーマットで返答してください。会話は推定したい文とその前後の内容が与えられます。誰のセリフとも考えられない場合はナレーターを指定してください。\nレスポンスフォーマット:\n{'description': '登場人物一覧のインデックス', 'properties': {'narrator_index': {'title': 'Narrator Index', 'type': 'integer'}}, 'required': ['narrator_index'], 'title': 'NarratorResponse', 'type': 'object'}"
+        },
+        {
+          "role": "user",
+          "content": "登場人物一覧:\n0. ナレーター (性別:None, 別名:[], 説明:世界観の説明などキャラクターの発言ではない内容のナレーションを行う)\n1. 花子 (性別:Gender.FEMALE, 別名:['はな', \"委員長'\", '\\\\'], 説明:明るい'委員長\")\n2. 太郎 (性別:None, 別名:[], 説明:)\n3. 花子 (性別:Gender.OTHER, 別名:[], 説明:別人)"
+        },
+        {
+          "role": "user",
+          "content": "\n                    今までの内容:\n                    \t地の文\n花子\t「あ」\n\t「い」\n\n                    推測したいセリフの内容:\n                    「う」\n\n                    後の内容:\n                    後\n「え」\n                    "
+        }
+      ],
+      "model": "test-model",
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "NarratorResponse",
+          "schema": {
+            "description": "登場人物一覧のインデックス",
+            "properties": {
+              "narrator_index": {
+                "title": "Narrator Index",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "narrator_index"
+            ],
+            "title": "NarratorResponse",
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  {
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "会話の内容から指定されたセリフがどの登場人物による発言かを推測し、指定されたJsonフォーマットで返答してください。会話は推定したい文とその前後の内容が与えられます。誰のセリフとも考えられない場合はナレーターを指定してください。\nレスポンスフォーマット:\n{'description': '登場人物一覧のインデックス', 'properties': {'narrator_index': {'title': 'Narrator Index', 'type': 'integer'}}, 'required': ['narrator_index'], 'title': 'NarratorResponse', 'type': 'object'}"
+        },
+        {
+          "role": "user",
+          "content": "登場人物一覧:\n0. ナレーター (性別:None, 別名:[], 説明:世界観の説明などキャラクターの発言ではない内容のナレーションを行う)\n1. 花子 (性別:Gender.FEMALE, 別名:['はな', \"委員長'\", '\\\\'], 説明:明るい'委員長\")\n2. 太郎 (性別:None, 別名:[], 説明:)\n3. 花子 (性別:Gender.OTHER, 別名:[], 説明:別人)"
+        },
+        {
+          "role": "user",
+          "content": "\n                    今までの内容:\n                    \n\n                    推測したいセリフの内容:\n                    「う」\n\n                    後の内容:\n                    \n                    "
+        }
+      ],
+      "model": "test-model",
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "NarratorResponse",
+          "schema": {
+            "description": "登場人物一覧のインデックス",
+            "properties": {
+              "narrator_index": {
+                "title": "Narrator Index",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "narrator_index"
+            ],
+            "title": "NarratorResponse",
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  {
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "今までの内容": [
+          {
+            "セリフ": "地の文"
+          },
+          {
+            "話者": "花子",
+            "セリフ": "「あ」"
+          },
+          {
+            "セリフ": "「い」"
+          }
+        ],
+        "推測したいセリフの内容": "「う」",
+        "後の内容": [
+          "後",
+          "「え」"
+        ]
+      },
+      "model": "jev-test",
+      "questions": {
+        "speaker": {
+          "type": "choice",
+          "instructions": "会話の内容から `推測したいセリフの内容` がどの登場人物による発言かを推測してください。`今までの内容` と `後の内容` は前後の文脈です。誰のセリフとも考えられない場合はナレーターを選択してください。",
+          "criteria": {
+            "ナレーター": {
+              "性別": "不明",
+              "別名": [],
+              "説明": "世界観の説明などキャラクターの発言ではない内容のナレーションを行う"
+            },
+            "花子": {
+              "性別": "女性",
+              "別名": [
+                "はな",
+                "委員長'",
+                "\\"
+              ],
+              "説明": "明るい'委員長\""
+            },
+            "太郎": {
+              "性別": "不明",
+              "別名": [],
+              "説明": ""
+            },
+            "花子 (2)": {
+              "性別": "その他",
+              "別名": [],
+              "説明": "別人"
+            }
+          }
+        }
+      }
+    }
+  }
+]

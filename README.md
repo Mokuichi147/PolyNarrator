@@ -8,13 +8,15 @@
 
 ## 必要なもの
 
-- Python 3.12.10 以上と [uv](https://docs.astral.sh/uv/)
+- Rust 1.82 以上
 - OpenAI API 互換の LLM サーバー(JSON Schema による構造化出力に対応したモデル)
 - 音声を書き出す場合: OpenAI 互換の `/v1/audio/speech` または Wyoming プロトコルに対応した TTS サーバー
 
 ```bash
-uv sync
+cargo install --path crates/polynarrator-cli
 ```
+
+`polynarrator` コマンドが使えるようになります。インストールせずに `cargo run --release -p polynarrator-cli -- <オプション> data/` でも実行できます。
 
 ## 入力ファイル
 
@@ -28,17 +30,17 @@ uv sync
 登場人物と話者を推測し、結果を標準出力に表示します。
 
 ```bash
-uv run main.py --host localhost --port 1234 --model qwen3.8-flash-next-iq3_s data/
+polynarrator --host localhost --port 1234 --model qwen3.8-flash-next-iq3_s data/
 ```
 
 `--tts-output` を指定すると、音声合成して `<入力ファイル名>.wav` を書き出します。
 
 ```bash
-uv run main.py --tts-output out/ --tts-backend openai --tts-url http://localhost:8880/v1 --tts-voices voice1,voice2,voice3 data/
+polynarrator --tts-output out/ --tts-backend openai --tts-url http://localhost:8880/v1 --tts-voices voice1,voice2,voice3 data/
 ```
 
 ```bash
-uv run main.py --tts-output out/ --tts-backend wyoming --tts-url tcp://localhost:10200 data/
+polynarrator --tts-output out/ --tts-backend wyoming --tts-url tcp://localhost:10200 data/
 ```
 
 - OpenAI 互換 API には音声一覧を取得する標準 API がないため、`--tts-voices` が必須です。
@@ -47,7 +49,7 @@ uv run main.py --tts-output out/ --tts-backend wyoming --tts-url tcp://localhost
 話者推測を Jev(TypeSafe System One API)互換モデルで行う場合は `--speaker-backend jev` を指定します(登場人物の抽出には引き続き LLM サーバーを使います)。
 
 ```bash
-uv run main.py --speaker-backend jev --jev-api-key <API キー> data/
+polynarrator --speaker-backend jev --jev-api-key <API キー> data/
 ```
 
 ### 音声の割り当て
@@ -91,8 +93,15 @@ uv run main.py --speaker-backend jev --jev-api-key <API キー> data/
 
 </details>
 
-## テスト
+## 開発
+
+| クレート | 内容 |
+| --- | --- |
+| `crates/polynarrator` | domain / application / adapters (コア機能) |
+| `crates/polynarrator-cli` | コマンドライン引数から各層を組み立てて実行する |
 
 ```bash
-uv run pytest
+cargo test
 ```
+
+`crates/polynarrator/tests/fixtures/python_requests.json` は、移植前の Python 版が LLM・Jev 互換 API へ送っていた要求本文です。Rust 版が同じプロンプトを送ることの確認に使っています。プロンプトを意図して変えた場合は、このファイルも合わせて更新してください。
