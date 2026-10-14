@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/yomitone", "crates/yomitone-cli"]
+members = ["crates/yomitone", "crates/yomitone-cli", "crates/yomitone-app"]
 
 [workspace.package]
 version = "0.1.0"

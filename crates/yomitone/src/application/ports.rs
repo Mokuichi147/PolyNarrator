@@ -134,6 +134,9 @@ pub trait Presenter {
 
     fn sentence_synthesis_failed(&self, voice: &str, text: &str, error: &str) {}
 
+    /// 章の total 行のうち done 行の音声合成を終えた(読み飛ばした行を含む)
+    fn synthesis_progressed(&self, done: usize, total: usize) {}
+
     /// location は書き出した出力先。書き出さなかった場合は None
     fn audio_exported(&self, location: Option<&str>, result: &SynthesisResult) {}
 

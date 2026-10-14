@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use crate::application::cancel::CancelFlag;
 use crate::application::narrate_novels::NarrationError;
 use crate::application::ports::{EstimationError, Presenter, SpeakerEstimator, SpeakerGuess};
 use crate::domain::character::Character;
@@ -14,11 +15,20 @@ pub struct SpeakerEstimation {
     pub following_count: usize,
     /// 「」で囲まれたセリフだけを推測し、それ以外はナレーターにする
     pub dialogue_only: bool,
+    /// 中止を求められたら次の文に進まない
+    pub cancel: CancelFlag,
 }
 
 impl SpeakerEstimation {
     pub fn new(estimator: Box<dyn SpeakerEstimator>, presenter: Rc<dyn Presenter>) -> Self {
-        Self { estimator, presenter, previous_count: 100, following_count: 0, dialogue_only: true }
+        Self {
+            estimator,
+            presenter,
+            previous_count: 100,
+            following_count: 0,
+            dialogue_only: true,
+            cancel: CancelFlag::new(),
+        }
     }
 
     /// 推測できない文はナレーターにして続行し、続けても失敗するエラーだけを返す
@@ -26,6 +36,9 @@ impl SpeakerEstimation {
         let candidates: Vec<Character> =
             std::iter::once(Character::narrator()).chain(novel.characters.iter().cloned()).collect();
         for i in 0..novel.sentences.len() {
+            if self.cancel.is_cancelled() {
+                return Err(NarrationError::Cancelled);
+            }
             if self.dialogue_only && !novel.sentences[i].is_dialogue() {
                 novel.sentences[i].speaker = Some(candidates[0].clone());
                 self.presenter.narration_assigned(&novel.sentences[i]);

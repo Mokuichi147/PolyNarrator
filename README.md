@@ -9,6 +9,7 @@
 ## 必要なもの
 
 - Rust 1.82 以上
+- デスクトップアプリを Linux でビルドする場合: GTK4 と libadwaita の開発用ライブラリ(Ubuntu では `sudo apt install libgtk-4-dev libadwaita-1-dev`)
 - OpenAI API 互換の LLM サーバー(JSON Schema による構造化出力に対応したモデル)
 - 音声を書き出す場合: OpenAI 互換の `/v1/audio/speech` または Wyoming プロトコルに対応した TTS サーバー
 
@@ -18,12 +19,34 @@ cargo install --path crates/yomitone-cli
 
 `yomitone` コマンドが使えるようになります。インストールせずに `cargo run --release -p yomitone-cli -- <オプション> data/` でも実行できます。
 
+デスクトップアプリは次のコマンドで起動します。
+
+```bash
+cargo run --release -p yomitone-app
+```
+
 ## 入力ファイル
 
 章ごとに分けた UTF-8 の `.txt` ファイルを1つのフォルダに置きます。
 
 - ファイル名の自然順に処理し、登場人物の一覧と音声の割り当ては後のファイルに引き継ぎます。
 - 1行を1つの文として扱い、行全体が `「……」` で囲まれた行だけを話者推測の対象にします。それ以外の行はナレーターが読みます。
+
+## デスクトップアプリ
+
+[naui](https://github.com/mokuichi147/naui) で各 OS のネイティブ UI(macOS は AppKit、Windows は WinUI 3、Linux は GTK4)を使います。左のサイドバーで画面を切り替え、コマンドのオプションと同じ項目をすべて画面から設定できます。
+
+| サイドバー | 内容 |
+| --- | --- |
+| 読み上げ | 入力フォルダと出力フォルダを選んで開始・中止する。進捗と経過を表示する |
+| 結果 | 登場人物の一覧と、音声の割り当て |
+| 設定 › LLM サーバー | 登場人物の抽出に使う LLM サーバー(`--host` / `--port` / `--model`) |
+| 設定 › 話者推測 | LLM サーバーか Jev 互換 API か(`--speaker-backend` / `--jev-*`) |
+| 設定 › 音声合成 | TTS サーバーと合成の設定(`--tts-backend` / `--tts-url` / `--tts-model` / `--tts-language` / `--tts-max-chars` / `--tts-pause` / `--tts-timeout` など) |
+| 設定 › 声の割り当て | 使用する音声とナレーター・性別ごとの音声(`--tts-*-voice(s)`)。Wyoming サーバーから音声一覧を取得できる |
+
+- 設定は変えるたびに保存し、次に起動したときに引き継ぎます(macOS は `~/Library/Application Support/Yomitone/settings.json`)。
+- API キーはファイルに保存しません。起動するたびに入力するか、環境変数(`TYPESAFE_API_KEY` / `OPENAI_API_KEY`)を設定してください。
 
 ## 使い方
 
@@ -99,6 +122,7 @@ yomitone --speaker-backend jev --jev-api-key <API キー> data/
 | --- | --- |
 | `crates/yomitone` | domain / application / adapters (コア機能) |
 | `crates/yomitone-cli` | コマンドライン引数から各層を組み立てて実行する |
+| `crates/yomitone-app` | naui のデスクトップアプリ |
 
 ```bash
 cargo test

@@ -116,9 +116,8 @@ pub struct JevSpeakerEstimator {
 impl JevSpeakerEstimator {
     /// 指定がない項目は環境変数、既定値の順に使う。API キーがない場合はエラー
     pub fn new(api_key: Option<String>, model: Option<String>, base_url: Option<String>) -> Result<Self, String> {
-        let api_key = resolve(api_key, API_KEY_ENV).ok_or_else(|| {
-            format!("APIキーが指定されていません。--jev-api-key か環境変数 {API_KEY_ENV} を指定してください")
-        })?;
+        let api_key = resolve(api_key, API_KEY_ENV)
+            .ok_or_else(|| format!("Jev互換APIのキーが指定されていません(環境変数 {API_KEY_ENV} もありません)"))?;
         let base_url = resolve(base_url, BASE_URL_ENV).unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
         let model = resolve(model, DEFAULT_MODEL_ENV).unwrap_or_else(|| DEFAULT_MODEL.to_string());
         let agent =
