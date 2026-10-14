@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use yomitone::application::cancel::CancelFlag;
 use yomitone::application::narrate_novels::{Chapter, NarrateNovels, NarrationError};
 use yomitone::application::ports::*;
 use yomitone::application::speaker_estimation::SpeakerEstimation;
@@ -570,4 +571,69 @@ fn narrate_novels_exports_each_chapter() {
     assert_eq!(report.failed_sources, ["2.txt"]);
     let voices = IndexMap::from([("ナレーター".to_string(), "n".to_string())]);
     assert_eq!(presenter.events.borrow().last().unwrap(), &Event::Finished(vec!["花子".into()], Some(voices)));
+}
+
+// --- 中止と進捗 ---
+
+/// 合成の進捗を記録し、cancel_at 行目を終えたところで中止を求める
+struct CancellingPresenter {
+    progress: RefCell<Vec<(usize, usize)>>,
+    cancel: CancelFlag,
+    cancel_at: usize,
+}
+
+impl Presenter for CancellingPresenter {
+    fn synthesis_progressed(&self, done: usize, total: usize) {
+        self.progress.borrow_mut().push((done, total));
+        if done == self.cancel_at {
+            self.cancel.cancel();
+        }
+    }
+}
+
+#[test]
+fn synthesis_reports_progress_and_stops_when_cancelled() {
+    let cancel = CancelFlag::new();
+    let presenter = Rc::new(CancellingPresenter { progress: RefCell::default(), cancel: cancel.clone(), cancel_at: 2 });
+    let client = FakeSynthesizer::ok();
+    let mut synthesizer = SentenceSynthesizer::new(
+        Box::new(client.clone()),
+        VoiceAssigner::with_voices(["n"]).unwrap(),
+        presenter.clone(),
+        0,
+    );
+    synthesizer.cancel = cancel;
+    let result = synthesizer.synthesize(&sentences(&["あ", "", "い", "う"]));
+    assert_eq!(result, Err(NarrationError::Cancelled));
+    assert_eq!(*presenter.progress.borrow(), [(1, 4), (2, 4)]);
+    assert_eq!(client.texts(), ["あ"]);
+}
+
+#[test]
+fn narrate_novels_stops_when_cancelled() {
+    let cancel = CancelFlag::new();
+    cancel.cancel();
+    let extractor = FakeExtractor::new([]);
+    let writer = FakeWriter::default();
+    let exporter = exporter(&FakeSynthesizer::ok(), &writer, Rc::new(SilentPresenter));
+    let speaker_estimation = estimation(&FakeEstimator::default(), Rc::new(SilentPresenter));
+    let mut chapters = vec![Chapter::new("1.txt", Novel::new(sentences(&["あ"])))];
+    let result =
+        NarrateNovels::new(Box::new(extractor.clone()), speaker_estimation, Rc::new(SilentPresenter), Some(exporter))
+            .with_cancel(cancel)
+            .run(&mut chapters);
+    assert_eq!(result, Err(NarrationError::Cancelled));
+    assert!(extractor.known.borrow().is_empty());
+    assert!(writer.written.borrow().is_empty());
+}
+
+#[test]
+fn speaker_estimation_stops_when_cancelled() {
+    let cancel = CancelFlag::new();
+    cancel.cancel();
+    let estimator = FakeEstimator::default();
+    let mut estimation = estimation(&estimator, Rc::new(SilentPresenter));
+    estimation.cancel = cancel;
+    assert_eq!(estimation.run(&mut dialogue_novel()), Err(NarrationError::Cancelled));
+    assert!(estimator.calls.borrow().is_empty());
 }

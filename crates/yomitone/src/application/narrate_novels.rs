@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use thiserror::Error;
 
+use crate::application::cancel::CancelFlag;
 use crate::application::ports::{CharacterExtractor, ExtractionError, Presenter};
 use crate::application::speaker_estimation::SpeakerEstimation;
 use crate::application::speech_synthesis::AudioExporter;
@@ -17,6 +18,9 @@ pub enum NarrationError {
     /// 続けても失敗するため音声合成を中断した
     #[error("音声合成を中断しました: {0}")]
     SynthesisAborted(String),
+    /// 利用者が中止した
+    #[error("中止しました")]
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +49,7 @@ pub struct NarrateNovels {
     speaker_estimation: SpeakerEstimation,
     presenter: Rc<dyn Presenter>,
     exporter: Option<AudioExporter>,
+    cancel: CancelFlag,
 }
 
 impl NarrateNovels {
@@ -54,7 +59,18 @@ impl NarrateNovels {
         presenter: Rc<dyn Presenter>,
         exporter: Option<AudioExporter>,
     ) -> Self {
-        Self { extractor, speaker_estimation, presenter, exporter }
+        Self { extractor, speaker_estimation, presenter, exporter, cancel: CancelFlag::new() }
+    }
+
+    /// cancel で中止を求められたら、文や章の区切りで止まって Cancelled を返す。
+    /// 合成の途中で止まった章の音声は書き出さない
+    pub fn with_cancel(mut self, cancel: CancelFlag) -> Self {
+        self.speaker_estimation.cancel = cancel.clone();
+        if let Some(exporter) = self.exporter.as_mut() {
+            exporter.synthesizer_mut().cancel = cancel.clone();
+        }
+        self.cancel = cancel;
+        self
     }
 
     pub fn exporter(&self) -> Option<&AudioExporter> {
@@ -64,6 +80,9 @@ impl NarrateNovels {
     pub fn run(&mut self, chapters: &mut [Chapter]) -> Result<NarrationReport, NarrationError> {
         let mut report = NarrationReport::default();
         for (index, chapter) in chapters.iter_mut().enumerate() {
+            if self.cancel.is_cancelled() {
+                return Err(NarrationError::Cancelled);
+            }
             let extracted = match self.extractor.extract_characters(&chapter.novel, &report.characters) {
                 Ok(extracted) => extracted,
                 Err(ExtractionError::Failed(e)) => {

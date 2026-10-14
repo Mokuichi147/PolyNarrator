@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 
-/// 無音はメモリ上に作るため、極端な値で大量のメモリを確保しないよう上限を設ける
-pub const MAX_PAUSE: f64 = 60.0;
+/// 行間に入れる無音の秒数の上限
+pub const MAX_PAUSE: f64 = yomitone::setup::MAX_TTS_PAUSE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum SpeakerBackend {

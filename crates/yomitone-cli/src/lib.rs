@@ -7,23 +7,16 @@ use std::path::Path;
 use std::rc::Rc;
 
 use clap::CommandFactory;
-use yomitone::adapters::jev::JevSpeakerEstimator;
-use yomitone::adapters::llm::OpenAiChatModel;
-use yomitone::adapters::openai_speech::OpenAiSpeechClient;
-use yomitone::adapters::text_files::{list_text_files, read_novel};
 use yomitone::adapters::wav::WavDirectory;
-use yomitone::adapters::wyoming::WyomingClient;
 use yomitone::application::narrate_novels::{Chapter, NarrateNovels, NarrationError};
 use yomitone::application::ports::{CharacterExtractor, Presenter, SpeakerEstimator, SpeechSynthesizer};
 use yomitone::application::speaker_estimation::SpeakerEstimation;
 use yomitone::application::speech_synthesis::{AudioExporter, SentenceSynthesizer};
 use yomitone::domain::voice_assigner::VoiceAssigner;
+use yomitone::setup::{self, JevOptions, LlmOptions, SetupError, TtsOptions};
 
 pub use crate::args::{Args, SpeakerBackend, TtsBackend, MAX_PAUSE};
 pub use crate::console::ConsolePresenter;
-
-pub const DEFAULT_OPENAI_TTS_URL: &str = "http://localhost:8880/v1";
-pub const DEFAULT_WYOMING_URL: &str = "tcp://localhost:10200";
 
 /// 終了コード 1 で終了する理由
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +29,19 @@ impl std::fmt::Display for CliError {
 }
 
 impl std::error::Error for CliError {}
+
+/// 設定の問題を、直すべきオプションが分かるメッセージにする
+impl From<SetupError> for CliError {
+    fn from(error: SetupError) -> Self {
+        CliError(match error {
+            SetupError::NoServerVoices => format!("{error}。--tts-voices や --tts-language を確認してください"),
+            SetupError::VoicesRequired => "利用する音声を --tts-voices で指定してください".to_string(),
+            SetupError::Assigner(_) => format!("{error}。--tts-voices に含まれる音声を指定してください"),
+            SetupError::Jev(_) => format!("{error}。--jev-api-key で指定してください"),
+            _ => error.to_string(),
+        })
+    }
+}
 
 fn fail<T>(message: impl Into<String>) -> Result<T, CliError> {
     Err(CliError(message.into()))
@@ -57,101 +63,55 @@ pub struct Factories {
 impl Default for Factories {
     fn default() -> Self {
         Self {
-            chat_model: Box::new(|args| {
-                let model = || OpenAiChatModel::new(&args.host, &args.port, &args.model);
-                (Box::new(model()), Box::new(model()))
-            }),
-            jev: Box::new(|args| {
-                JevSpeakerEstimator::new(args.jev_api_key.clone(), args.jev_model.clone(), args.jev_base_url.clone())
-                    .map(|e| Box::new(e) as Box<dyn SpeakerEstimator>)
-                    .map_err(CliError)
-            }),
+            chat_model: Box::new(|args| setup::create_chat_models(&llm_options(args))),
+            jev: Box::new(|args| Ok(setup::create_jev(&jev_options(args))?)),
             tts: Box::new(create_tts),
             presenter: Box::new(|| Rc::new(ConsolePresenter::default())),
         }
     }
 }
 
-pub fn split_voices(value: Option<&str>) -> Vec<String> {
-    value.unwrap_or_default().split(',').map(str::trim).filter(|v| !v.is_empty()).map(str::to_string).collect()
+pub fn llm_options(args: &Args) -> LlmOptions {
+    LlmOptions { host: args.host.clone(), port: args.port.clone(), model: args.model.clone() }
+}
+
+pub fn jev_options(args: &Args) -> JevOptions {
+    JevOptions { api_key: args.jev_api_key.clone(), model: args.jev_model.clone(), base_url: args.jev_base_url.clone() }
+}
+
+pub fn tts_options(args: &Args) -> TtsOptions {
+    let split = |value: &Option<String>| setup::split_voices(value.as_deref().unwrap_or_default());
+    TtsOptions {
+        backend: match args.tts_backend {
+            TtsBackend::Openai => setup::TtsBackend::OpenAi,
+            TtsBackend::Wyoming => setup::TtsBackend::Wyoming,
+        },
+        url: args.tts_url.clone(),
+        model: args.tts_model.clone(),
+        api_key: args.tts_api_key.clone(),
+        language: args.tts_language.clone(),
+        voices: split(&args.tts_voices),
+        narrator_voice: args.tts_narrator_voice.clone(),
+        male_voices: split(&args.tts_male_voices),
+        female_voices: split(&args.tts_female_voices),
+        timeout: args.tts_timeout,
+    }
 }
 
 /// LLMやTTSサーバーでの処理を始める前に、全ての入力ファイルを読み込んでおく
 pub fn load_chapters(folder: &str) -> Result<Vec<Chapter>, CliError> {
-    let files = list_text_files(Path::new(folder))
-        .map_err(|e| CliError(format!("入力フォルダを読み込めませんでした({folder}): {e}")))?;
-    files
-        .into_iter()
-        .map(|file| {
-            let path = Path::new(folder).join(file);
-            let novel = read_novel(&path)
-                .map_err(|e| CliError(format!("入力ファイルを読み込めませんでした({}): {e}", path.display())))?;
-            Ok(Chapter::new(path.display().to_string(), novel))
-        })
-        .collect()
+    Ok(setup::load_chapters(Path::new(folder))?)
 }
 
 /// LLMやTTSサーバーでの処理を始める前に、出力先に書き出せるかを確認する
 pub fn prepare_output(directory: &str, pause: f64, chapters: &[Chapter]) -> Result<WavDirectory, CliError> {
-    let writer = WavDirectory::new(directory, pause);
-    let sources: Vec<&str> = chapters.iter().map(|c| c.source.as_str()).collect();
-    writer.prepare(&sources).map_err(|e| CliError(e.to_string()))?;
-    Ok(writer)
+    Ok(setup::prepare_output(Path::new(directory), pause, chapters)?)
 }
 
 pub fn create_tts(args: &Args) -> Result<Tts, CliError> {
-    let wyoming = args.tts_backend == TtsBackend::Wyoming;
-    let client: Box<dyn SpeechSynthesizer> = if wyoming {
-        let uri = args.tts_url.as_deref().unwrap_or(DEFAULT_WYOMING_URL);
-        let client = WyomingClient::new(uri, args.tts_timeout, Some(&args.tts_language))
-            .map_err(|e| CliError(format!("Wyomingサーバー({uri})から音声一覧を取得できませんでした: {e}")))?;
-        Box::new(client)
-    } else {
-        let api_key = args
-            .tts_api_key
-            .clone()
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .unwrap_or_else(|| "not-needed".into());
-        let url = args.tts_url.as_deref().unwrap_or(DEFAULT_OPENAI_TTS_URL);
-        Box::new(OpenAiSpeechClient::new(url, &args.tts_model, &api_key, args.tts_timeout))
-    };
-
-    let explicit_voices = split_voices(args.tts_voices.as_deref());
-    let mut voices = if explicit_voices.is_empty() { client.list_voices() } else { explicit_voices };
-    let male_voices = split_voices(args.tts_male_voices.as_deref());
-    let female_voices = split_voices(args.tts_female_voices.as_deref());
-    let role_voices: Vec<String> = args
-        .tts_narrator_voice
-        .iter()
-        .filter(|v| !v.is_empty())
-        .cloned()
-        .chain(male_voices.clone())
-        .chain(female_voices.clone())
-        .collect();
-    let unknown = client.unknown_voices(&[voices.clone(), role_voices.clone()].concat());
-    if !unknown.is_empty() {
-        return fail(format!("TTSサーバーにない音声が指定されています: {}", unknown.join(", ")));
-    }
-    if args.tts_voices.as_deref().unwrap_or_default().is_empty() && wyoming {
-        // サーバーの一覧を使う場合、言語の絞り込みや複数話者モデルの既定話者で一覧に出ない音声も、明示されていれば使う
-        for voice in role_voices {
-            if !voices.contains(&voice) {
-                voices.push(voice);
-            }
-        }
-    }
-    if voices.is_empty() {
-        if wyoming {
-            return fail("TTSサーバーから利用できる音声を取得できませんでした。--tts-voices や --tts-language を確認してください");
-        }
-        return fail("利用する音声を --tts-voices で指定してください");
-    }
-
-    let narrator_voice = args.tts_narrator_voice.clone().filter(|v| !v.is_empty());
-    let assigner = VoiceAssigner::new(voices.clone(), narrator_voice, male_voices, female_voices)
-        .map_err(|e| CliError(format!("{e}。--tts-voices に含まれる音声を指定してください")))?;
-    let backend = if wyoming { "wyoming" } else { "openai" };
-    println!("TTS 初期化: backend={backend}, 音声一覧=[{}]", voices.join(", "));
+    let options = tts_options(args);
+    let (client, assigner) = setup::create_tts(&options)?;
+    println!("TTS 初期化: backend={}, 音声一覧=[{}]", options.backend.name(), assigner.voices().join(", "));
     Ok((client, assigner))
 }
 
