@@ -15,6 +15,7 @@ use super::parts::{folder_field, heading, note, title, Form};
 use super::results_page::ResultsView;
 use super::store::Store;
 use crate::progress::Progress;
+use crate::settings::{SpeakerBackend, TtsBackendSetting};
 use crate::worker::{self, Event, Outcome};
 
 /// 経過の表示に残す行数。長い小説でも表示が重くならないよう古い行から捨てる
@@ -233,9 +234,29 @@ pub(crate) fn build(ui: &Ui, store: &Store, results: ResultsView) -> Result<(Gri
     )?;
     form.add(ui, "入力フォルダ", &input_row)?;
 
+    let speakers = [SpeakerBackend::Llm, SpeakerBackend::Jev];
+    let speaker = ui.combo_box()?;
+    speaker.set_items(&speakers.map(SpeakerBackend::page_title));
+    speaker.set_selected(speakers.iter().position(|&b| b == store.read(|s| s.speaker_backend)).unwrap_or(0));
+    speaker.on_select({
+        let store = store.clone();
+        move |index| store.update(|s| s.speaker_backend = speakers[index.min(speakers.len() - 1)])
+    });
+    form.add(ui, "話者推測", &speaker)?;
+    form.note(ui, "セリフの話者を推測するのに使います。登場人物の抽出には常に LLM を使います。")?;
+
     let export: Toggle = ui.toggle("音声合成して WAV を書き出す")?;
     export.set_on(store.read(|s| s.export_audio));
     form.add(ui, "音声", &export)?;
+    let backends = [TtsBackendSetting::Openai, TtsBackendSetting::Wyoming];
+    let tts = ui.combo_box()?;
+    tts.set_items(&backends.map(TtsBackendSetting::page_title));
+    tts.set_selected(backends.iter().position(|&b| b == store.read(|s| s.tts_backend)).unwrap_or(0));
+    tts.on_select({
+        let store = store.clone();
+        move |index| store.update(|s| s.tts_backend = backends[index.min(backends.len() - 1)])
+    });
+    form.add(ui, "TTS", &tts)?;
     let (output_row, output_input, output_picker) = folder_field(
         ui,
         store,
@@ -245,6 +266,7 @@ pub(crate) fn build(ui: &Ui, store: &Store, results: ResultsView) -> Result<(Gri
     form.add(ui, "出力フォルダ", &output_row)?;
     form.note(ui, "章ごとに <入力ファイル名>.wav を書き出します。")?;
     let set_output_enabled = move |enabled: bool| {
+        tts.set_enabled(enabled);
         output_input.set_enabled(enabled);
         output_picker.set_enabled(enabled);
     };

@@ -6,8 +6,10 @@
 //! - [`application`] … ユースケースと、ユースケースが外部に求める機能 (ports)
 //! - [`adapters`] … ports を LLM・TTS サーバーやファイルで実装したもの
 //! - [`setup`] … 設定から各層の実装を組み立てる。コマンドラインと GUI で共通に使う
+//! - [`diagnostics`] … 設定した接続先に正しくつながるかを確かめる
 
 pub mod adapters;
 pub mod application;
+pub mod diagnostics;
 pub mod domain;
 pub mod setup;

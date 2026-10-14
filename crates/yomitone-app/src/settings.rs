@@ -15,6 +15,16 @@ pub enum SpeakerBackend {
     Jev,
 }
 
+impl SpeakerBackend {
+    /// 設定する画面の名前
+    pub const fn page_title(self) -> &'static str {
+        match self {
+            SpeakerBackend::Llm => "LLM",
+            SpeakerBackend::Jev => "Jev",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TtsBackendSetting {
@@ -24,11 +34,88 @@ pub enum TtsBackendSetting {
 }
 
 impl TtsBackendSetting {
+    /// 設定する画面の名前
+    pub const fn page_title(self) -> &'static str {
+        match self {
+            TtsBackendSetting::Openai => "TTS（OpenAI互換API）",
+            TtsBackendSetting::Wyoming => "TTS（Wyoming）",
+        }
+    }
+
     pub fn backend(self) -> TtsBackend {
         match self {
             TtsBackendSetting::Openai => TtsBackend::OpenAi,
             TtsBackendSetting::Wyoming => TtsBackend::Wyoming,
         }
+    }
+}
+
+/// TTS サーバーごとの設定。音声名はサーバーごとに違うため、音声の割り当てもサーバーごとに持つ
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TtsServerSettings {
+    /// 空のときはプロトコルごとの既定の URL
+    pub url: String,
+    /// OpenAI 互換 API のモデル名
+    pub model: String,
+    /// OpenAI 互換 API のキー。平文でファイルに残さないよう保存しない
+    #[serde(skip)]
+    pub api_key: String,
+    /// Wyoming で音声一覧を絞り込む言語
+    pub language: String,
+    pub voices: String,
+    pub narrator_voice: String,
+    pub male_voices: String,
+    pub female_voices: String,
+    pub max_chars: usize,
+    pub pause: f64,
+    pub timeout: f64,
+}
+
+impl Default for TtsServerSettings {
+    fn default() -> Self {
+        let tts = TtsOptions::default();
+        Self {
+            url: String::new(),
+            model: tts.model,
+            api_key: String::new(),
+            language: tts.language,
+            voices: String::new(),
+            narrator_voice: String::new(),
+            male_voices: String::new(),
+            female_voices: String::new(),
+            max_chars: setup::DEFAULT_TTS_MAX_CHARS,
+            pause: setup::DEFAULT_TTS_PAUSE,
+            timeout: tts.timeout,
+        }
+    }
+}
+
+impl TtsServerSettings {
+    pub fn options(&self, backend: TtsBackend) -> TtsOptions {
+        TtsOptions {
+            backend,
+            url: optional(&self.url),
+            model: optional(&self.model).unwrap_or_else(|| setup::DEFAULT_OPENAI_TTS_MODEL.into()),
+            api_key: optional(&self.api_key),
+            language: self.language.trim().to_string(),
+            voices: setup::split_voices(&self.voices),
+            narrator_voice: optional(&self.narrator_voice),
+            male_voices: setup::split_voices(&self.male_voices),
+            female_voices: setup::split_voices(&self.female_voices),
+            timeout: self.timeout,
+        }
+    }
+
+    /// 合成を始められない設定であれば、直すべき項目を伝えるメッセージを返す。page は設定する画面の名前
+    pub fn validate(&self, page: &str) -> Result<(), String> {
+        if !(0.0..=setup::MAX_TTS_PAUSE).contains(&self.pause) {
+            return Err(format!("「{page}」の行間の無音は0〜{}秒で指定してください", setup::MAX_TTS_PAUSE));
+        }
+        if !(self.timeout.is_finite() && self.timeout > 0.0) {
+            return Err(format!("「{page}」のタイムアウトは0より大きい秒数で指定してください"));
+        }
+        Ok(())
     }
 }
 
@@ -44,6 +131,7 @@ pub struct AppSettings {
     pub llm_port: String,
     pub llm_model: String,
 
+    /// 話者推測に使うもの
     pub speaker_backend: SpeakerBackend,
     pub jev_model: String,
     pub jev_base_url: String,
@@ -51,26 +139,15 @@ pub struct AppSettings {
     #[serde(skip)]
     pub jev_api_key: String,
 
+    /// 音声合成に使うもの
     pub tts_backend: TtsBackendSetting,
-    pub tts_url: String,
-    pub tts_model: String,
-    /// 平文でファイルに残さないよう保存しない
-    #[serde(skip)]
-    pub tts_api_key: String,
-    pub tts_language: String,
-    pub tts_voices: String,
-    pub tts_narrator_voice: String,
-    pub tts_male_voices: String,
-    pub tts_female_voices: String,
-    pub tts_pause: f64,
-    pub tts_max_chars: usize,
-    pub tts_timeout: f64,
+    pub openai_tts: TtsServerSettings,
+    pub wyoming_tts: TtsServerSettings,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         let llm = LlmOptions::default();
-        let tts = TtsOptions::default();
         Self {
             input_folder: String::new(),
             export_audio: false,
@@ -83,17 +160,8 @@ impl Default for AppSettings {
             jev_base_url: String::new(),
             jev_api_key: String::new(),
             tts_backend: TtsBackendSetting::default(),
-            tts_url: String::new(),
-            tts_model: tts.model,
-            tts_api_key: String::new(),
-            tts_language: tts.language,
-            tts_voices: String::new(),
-            tts_narrator_voice: String::new(),
-            tts_male_voices: String::new(),
-            tts_female_voices: String::new(),
-            tts_pause: setup::DEFAULT_TTS_PAUSE,
-            tts_max_chars: setup::DEFAULT_TTS_MAX_CHARS,
-            tts_timeout: tts.timeout,
+            openai_tts: TtsServerSettings::default(),
+            wyoming_tts: TtsServerSettings::default(),
         }
     }
 }
@@ -121,19 +189,27 @@ impl AppSettings {
         }
     }
 
-    pub fn tts_options(&self) -> TtsOptions {
-        TtsOptions {
-            backend: self.tts_backend.backend(),
-            url: optional(&self.tts_url),
-            model: optional(&self.tts_model).unwrap_or_else(|| setup::DEFAULT_OPENAI_TTS_MODEL.into()),
-            api_key: optional(&self.tts_api_key),
-            language: self.tts_language.trim().to_string(),
-            voices: setup::split_voices(&self.tts_voices),
-            narrator_voice: optional(&self.tts_narrator_voice),
-            male_voices: setup::split_voices(&self.tts_male_voices),
-            female_voices: setup::split_voices(&self.tts_female_voices),
-            timeout: self.tts_timeout,
+    pub fn tts_server(&self, backend: TtsBackendSetting) -> &TtsServerSettings {
+        match backend {
+            TtsBackendSetting::Openai => &self.openai_tts,
+            TtsBackendSetting::Wyoming => &self.wyoming_tts,
         }
+    }
+
+    pub fn tts_server_mut(&mut self, backend: TtsBackendSetting) -> &mut TtsServerSettings {
+        match backend {
+            TtsBackendSetting::Openai => &mut self.openai_tts,
+            TtsBackendSetting::Wyoming => &mut self.wyoming_tts,
+        }
+    }
+
+    /// 音声合成に使う TTS サーバーの設定
+    pub fn selected_tts(&self) -> &TtsServerSettings {
+        self.tts_server(self.tts_backend)
+    }
+
+    pub fn tts_options(&self) -> TtsOptions {
+        self.selected_tts().options(self.tts_backend.backend())
     }
 
     /// 処理を始められない設定であれば、直すべき項目を伝えるメッセージを返す
@@ -145,12 +221,7 @@ impl AppSettings {
             if self.output_folder.trim().is_empty() {
                 return Err("音声の出力先フォルダを選んでください".into());
             }
-            if !(0.0..=setup::MAX_TTS_PAUSE).contains(&self.tts_pause) {
-                return Err(format!("「音声合成」の行間の無音は0〜{}秒で指定してください", setup::MAX_TTS_PAUSE));
-            }
-            if !(self.tts_timeout.is_finite() && self.tts_timeout > 0.0) {
-                return Err("「音声合成」のタイムアウトは0より大きい秒数で指定してください".into());
-            }
+            self.selected_tts().validate(self.tts_backend.page_title())?;
         }
         Ok(())
     }

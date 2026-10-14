@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use support::*;
 use yomitone::application::cancel::CancelFlag;
-use yomitone_app::settings::{self, AppSettings, SpeakerBackend};
+use yomitone_app::settings::{self, AppSettings, SpeakerBackend, TtsServerSettings};
 use yomitone_app::worker::{run, Event, Outcome};
 
 /// 「名前:セリフ」の行をその登場人物のセリフとみなす LLM サーバー
@@ -72,7 +72,7 @@ impl Workspace {
             output_folder: self.dir.path().join("out").display().to_string(),
             llm_host: "127.0.0.1".into(),
             llm_port: port,
-            tts_pause: 0.0,
+            openai_tts: TtsServerSettings { pause: 0.0, ..TtsServerSettings::default() },
             ..AppSettings::default()
         }
     }
@@ -83,8 +83,9 @@ fn narrates_and_exports_audio() {
     let llm = chat_server();
     let (speech, requests) = speech_server();
     let workspace = Workspace::new();
-    let settings =
-        AppSettings { export_audio: true, tts_url: speech, tts_voices: "n, a, b".into(), ..workspace.settings(&llm) };
+    let mut settings = AppSettings { export_audio: true, ..workspace.settings(&llm) };
+    settings.openai_tts.url = speech;
+    settings.openai_tts.voices = "n, a, b".into();
     let events = collect(settings, CancelFlag::new());
     assert_eq!(outcome(&events), &Outcome::Completed, "{events:?}");
     assert!(events.contains(&Event::Loaded { counts: vec![2, 2], synthesize: true }));
@@ -125,8 +126,9 @@ fn reports_partial_failure() {
     let (speech, _) = speech_server();
     let workspace = Workspace::new();
     fs::write(workspace.dir.path().join("data").join("2.txt"), "「太郎:やあ」\n「太郎:bad」\n").unwrap();
-    let settings =
-        AppSettings { export_audio: true, tts_url: speech, tts_voices: "n,a,b".into(), ..workspace.settings(&llm) };
+    let mut settings = AppSettings { export_audio: true, ..workspace.settings(&llm) };
+    settings.openai_tts.url = speech;
+    settings.openai_tts.voices = "n,a,b".into();
     match outcome(&collect(settings, CancelFlag::new())) {
         Outcome::PartiallyFailed(sources) => assert!(sources[0].ends_with("2.txt"), "{sources:?}"),
         other => panic!("{other:?}"),
@@ -156,14 +158,17 @@ fn reports_setup_errors_with_where_to_fix() {
             AppSettings { export_audio: true, output_folder: " ".into(), ..workspace.settings("http://127.0.0.1:1") },
             "出力先フォルダ",
         ),
-        (AppSettings { export_audio: true, ..workspace.settings("http://127.0.0.1:1") }, "「声の割り当て」"),
+        (
+            AppSettings { export_audio: true, ..workspace.settings("http://127.0.0.1:1") },
+            "「TTS（OpenAI互換API）」で使用する音声",
+        ),
         (
             AppSettings {
                 speaker_backend: SpeakerBackend::Jev,
                 jev_api_key: String::new(),
                 ..workspace.settings("http://127.0.0.1:1")
             },
-            "「話者推測」",
+            "「Jev」で API キー",
         ),
     ];
     for (settings, message) in cases {
@@ -192,18 +197,43 @@ fn settings_are_saved_without_api_keys() {
         input_folder: "/novel".into(),
         speaker_backend: SpeakerBackend::Jev,
         jev_api_key: "secret-jev".into(),
-        tts_api_key: "secret-tts".into(),
-        tts_voices: "a,b".into(),
+        openai_tts: TtsServerSettings {
+            api_key: "secret-tts".into(),
+            voices: "a,b".into(),
+            ..TtsServerSettings::default()
+        },
         ..AppSettings::default()
     };
     settings::save(&path, &saved).unwrap();
     let text = fs::read_to_string(&path).unwrap();
     assert!(!text.contains("secret"), "{text}");
     let loaded = settings::load(&path);
-    assert_eq!(loaded, AppSettings { jev_api_key: String::new(), tts_api_key: String::new(), ..saved });
+    let mut expected = AppSettings { jev_api_key: String::new(), ..saved };
+    expected.openai_tts.api_key = String::new();
+    assert_eq!(loaded, expected);
     // 項目が足りない古い設定や壊れた設定でも起動できる
     fs::write(&path, r#"{"input_folder": "/old"}"#).unwrap();
     assert_eq!(settings::load(&path), AppSettings { input_folder: "/old".into(), ..AppSettings::default() });
     fs::write(&path, "{").unwrap();
     assert_eq!(settings::load(&path), AppSettings::default());
+}
+
+#[test]
+fn uses_settings_of_selected_tts() {
+    let llm = chat_server();
+    let (uri, state) = wyoming_server();
+    let workspace = Workspace::new();
+    let mut settings = AppSettings {
+        export_audio: true,
+        tts_backend: settings::TtsBackendSetting::Wyoming,
+        ..workspace.settings(&llm)
+    };
+    // 選んでいない OpenAI 互換 API の設定は使わない
+    settings.openai_tts.voices = "unused".into();
+    settings.wyoming_tts =
+        TtsServerSettings { url: uri, narrator_voice: "ja-multi".into(), pause: 0.0, ..TtsServerSettings::default() };
+    let events = collect(settings, CancelFlag::new());
+    assert_eq!(outcome(&events), &Outcome::Completed, "{events:?}");
+    let voices: Vec<Value> = state.lock().unwrap().requests.iter().map(|r| r["voice"]["name"].clone()).collect();
+    assert_eq!(voices, [json!("ja-multi"), json!("ja-a"), json!("ja-multi")]);
 }

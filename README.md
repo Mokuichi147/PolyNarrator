@@ -38,13 +38,15 @@ cargo run --release -p yomitone-app
 
 | サイドバー | 内容 |
 | --- | --- |
-| 読み上げ | 入力フォルダと出力フォルダを選んで開始・中止する。進捗と経過を表示する |
+| 読み上げ | 入力フォルダと出力フォルダ、話者推測(LLM / Jev)と TTS(OpenAI 互換 API / Wyoming)を選んで開始・中止する。進捗と経過を表示する |
 | 結果 | 登場人物の一覧と、音声の割り当て |
-| 設定 › LLM サーバー | 登場人物の抽出に使う LLM サーバー(`--host` / `--port` / `--model`) |
-| 設定 › 話者推測 | LLM サーバーか Jev 互換 API か(`--speaker-backend` / `--jev-*`) |
-| 設定 › 音声合成 | TTS サーバーと合成の設定(`--tts-backend` / `--tts-url` / `--tts-model` / `--tts-language` / `--tts-max-chars` / `--tts-pause` / `--tts-timeout` など) |
-| 設定 › 声の割り当て | 使用する音声とナレーター・性別ごとの音声(`--tts-*-voice(s)`)。Wyoming サーバーから音声一覧を取得できる |
+| 設定 › LLM | 登場人物の抽出と話者推測に使う LLM サーバー(`--host` / `--port` / `--model`) |
+| 設定 › Jev | 話者推測に使う Jev 互換 API(`--jev-model` / `--jev-base-url` / `--jev-api-key`) |
+| 設定 › TTS（OpenAI互換API） | URL・モデル名・API キー・タイムアウト、使用する音声とナレーター・性別ごとの音声、1回の最大文字数・行間の無音 |
+| 設定 › TTS（Wyoming） | URL・言語・タイムアウト、使用する音声とナレーター・性別ごとの音声(サーバーから一覧を取得できる)、1回の最大文字数・行間の無音 |
 
+- 設定の各画面の「接続を確認」で、設定した内容で使えるかを確かめられます。LLM と Jev はモデル一覧を取得してモデル名があるかを、TTS は設定した音声で短い文を実際に合成できるかを確かめます。
+- 音声名はサーバーごとに違うため、声の割り当てと合成の設定は TTS ごとに別々に保存します。
 - 設定は変えるたびに保存し、次に起動したときに引き継ぎます(macOS は `~/Library/Application Support/Yomitone/settings.json`)。
 - API キーはファイルに保存しません。起動するたびに入力するか、環境変数(`TYPESAFE_API_KEY` / `OPENAI_API_KEY`)を設定してください。
 

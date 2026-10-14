@@ -7,6 +7,8 @@ use naui::{
     ScrollPolicy, Sizing, Stack, TextColor, TextInput, TextStyle, Track, Ui, Widget,
 };
 
+use yomitone::diagnostics::CheckOutcome;
+
 use super::store::Store;
 use crate::settings::AppSettings;
 
@@ -174,4 +176,51 @@ pub(crate) fn number_field(
     input.set_value(value);
     input.set_sizing(Sizing::new().width(Length::Fixed(140.0)));
     Ok(input)
+}
+
+/// 「接続を確認」のボタンと結果を page へ置く。check は押した時点の設定の写しを受け取り、
+/// 画面を止めないよう別のスレッドで呼ばれる
+pub(crate) fn check_section<F>(ui: &Ui, store: &Store, page: &Stack, description: &str, check: F) -> Result<()>
+where
+    F: Fn(&AppSettings) -> CheckOutcome + Send + Clone + 'static,
+{
+    page.append(&heading(ui, "接続の確認")?);
+    page.append(&note(ui, description)?);
+    let button = ui.button("接続を確認")?;
+    page.append(&button);
+    let result = ui.label("")?;
+    result.set_wrap(true);
+    result.set_selectable(true);
+    result.set_sizing(Sizing::fill_width());
+    page.append(&result);
+
+    button.on_click({
+        let ui = ui.clone();
+        let store = store.clone();
+        let button = button.clone();
+        move || {
+            button.set_enabled(false);
+            result.set_text("確認しています…");
+            result.set_color(TextColor::Secondary);
+            let sender = ui.tasks().channel({
+                let (button, result) = (button.clone(), result.clone());
+                move |outcome: CheckOutcome| {
+                    button.set_enabled(true);
+                    result.set_text(outcome.message());
+                    result.set_color(match outcome {
+                        CheckOutcome::Ok(_) => TextColor::Success,
+                        CheckOutcome::Warning(_) => TextColor::Warning,
+                        CheckOutcome::Failed(_) => TextColor::Danger,
+                    });
+                }
+            });
+            let settings = store.snapshot();
+            let check = check.clone();
+            std::thread::spawn(move || {
+                // 画面を閉じた後に届いた結果は捨てる
+                let _ = sender.send(check(&settings));
+            });
+        }
+    });
+    Ok(())
 }

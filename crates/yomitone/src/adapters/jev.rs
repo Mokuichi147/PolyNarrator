@@ -14,6 +14,7 @@ pub const DEFAULT_MODEL_ENV: &str = "TYPESAFE_DEFAULT_MODEL";
 pub const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
 pub const DEFAULT_MODEL: &str = "jev-latest";
 const SYSTEM_ONE_PATH: &str = "/v1/systemone";
+const MODELS_PATH: &str = "/v1/models";
 /// 1回の送受信のタイムアウト
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// エラー応答の本文をメッセージに含める長さの上限
@@ -163,49 +164,88 @@ impl JevSpeakerEstimator {
         })
     }
 
-    fn endpoint(&self) -> String {
-        format!("POST {}{SYSTEM_ONE_PATH}", self.base_url)
+    /// 使うモデルの名前
+    pub fn model(&self) -> &str {
+        &self.model
     }
 
-    /// SDK と同じ形のエラーメッセージにし、入力長超過かどうかを判定する
-    fn map_failure(&self, failure: HttpFailure) -> EstimationError {
-        match failure {
-            HttpFailure::Status { status, body, request_id } => {
-                let parsed: Option<Value> = serde_json::from_str(&body).ok();
-                let message = parsed
-                    .as_ref()
-                    .and_then(extract_message)
-                    .or_else(|| (!body.is_empty() && parsed.is_none()).then(|| body.clone()))
-                    .unwrap_or_else(|| {
-                        if body.is_empty() {
-                            "status code (no body)".to_string()
-                        } else if body.chars().count() > MAX_ERROR_BODY_LENGTH {
-                            format!("{}…", body.chars().take(MAX_ERROR_BODY_LENGTH).collect::<String>())
-                        } else {
-                            body.clone()
-                        }
-                    });
-                let mut error = format!("{}: {status} {message}", self.endpoint());
-                if let Some(id) = request_id {
-                    error.push_str(&format!(" (request_id={id})"));
-                }
-                if is_input_too_long(status, &format!("{error} {body}")) {
-                    EstimationError::ContextTooLong(error)
-                } else {
-                    EstimationError::Failed(error)
-                }
+    /// エラーメッセージに含める、要求の種類と URL
+    fn endpoint(&self, method: &str, path: &str) -> String {
+        format!("{method} {}{path}", self.base_url)
+    }
+
+    /// 認証などの見出しを付けた要求。引数は何回目の再試行か
+    fn request(&self, method: &'static str, path: &str) -> impl Fn(u32) -> ureq::Request + '_ {
+        let url = format!("{}{path}", self.base_url);
+        let user_agent = format!("yomitone/{}", env!("CARGO_PKG_VERSION"));
+        let authorization = format!("Bearer {}", self.api_key);
+        move |attempt| {
+            let request = self
+                .agent
+                .request(method, &url)
+                .set("Authorization", &authorization)
+                .set("Accept", "application/json")
+                .set("User-Agent", &user_agent);
+            if attempt > 0 {
+                request.set("X-TypeSafe-Retry-Count", &attempt.to_string())
+            } else {
+                request
             }
-            // 接続エラーやタイムアウトはこの文の推測を諦めてナレーター扱いにする
-            HttpFailure::Transport { timeout: true, .. } => {
-                EstimationError::Failed(format!("Request timed out (timeout={}).", TIMEOUT.as_secs_f64()))
-            }
-            HttpFailure::Transport { message, .. } => EstimationError::Failed(format!("Connection error: {message}")),
         }
     }
 
-    fn invalid_response(&self, detail: impl std::fmt::Display) -> EstimationError {
-        EstimationError::Failed(format!("{}: 200 Invalid response data: {detail}", self.endpoint()))
+    /// API キーで使えるモデルの名前 (GET /v1/models)
+    pub fn list_models(&self) -> Result<Vec<String>, String> {
+        let endpoint = self.endpoint("GET", MODELS_PATH);
+        let response = send_with_retry(&RETRY, self.request("GET", MODELS_PATH), None)
+            .map_err(|failure| map_failure(&endpoint, failure).to_string())?;
+        let response: Value = response.into_json().map_err(|e| invalid_response(&endpoint, e).to_string())?;
+        let models = response
+            .get("models")
+            .and_then(Value::as_array)
+            .ok_or_else(|| invalid_response(&endpoint, "models").to_string())?;
+        Ok(models.iter().filter_map(|m| m.get("name").and_then(Value::as_str)).map(str::to_string).collect())
     }
+}
+
+/// SDK と同じ形のエラーメッセージにし、入力長超過かどうかを判定する
+fn map_failure(endpoint: &str, failure: HttpFailure) -> EstimationError {
+    match failure {
+        HttpFailure::Status { status, body, request_id } => {
+            let parsed: Option<Value> = serde_json::from_str(&body).ok();
+            let message = parsed
+                .as_ref()
+                .and_then(extract_message)
+                .or_else(|| (!body.is_empty() && parsed.is_none()).then(|| body.clone()))
+                .unwrap_or_else(|| {
+                    if body.is_empty() {
+                        "status code (no body)".to_string()
+                    } else if body.chars().count() > MAX_ERROR_BODY_LENGTH {
+                        format!("{}…", body.chars().take(MAX_ERROR_BODY_LENGTH).collect::<String>())
+                    } else {
+                        body.clone()
+                    }
+                });
+            let mut error = format!("{endpoint}: {status} {message}");
+            if let Some(id) = request_id {
+                error.push_str(&format!(" (request_id={id})"));
+            }
+            if is_input_too_long(status, &format!("{error} {body}")) {
+                EstimationError::ContextTooLong(error)
+            } else {
+                EstimationError::Failed(error)
+            }
+        }
+        // 接続エラーやタイムアウトはこの文の推測を諦めてナレーター扱いにする
+        HttpFailure::Transport { timeout: true, .. } => {
+            EstimationError::Failed(format!("Request timed out (timeout={}).", TIMEOUT.as_secs_f64()))
+        }
+        HttpFailure::Transport { message, .. } => EstimationError::Failed(format!("Connection error: {message}")),
+    }
+}
+
+fn invalid_response(endpoint: &str, detail: impl std::fmt::Display) -> EstimationError {
+    EstimationError::Failed(format!("{endpoint}: 200 Invalid response data: {detail}"))
 }
 
 fn is_input_too_long(status: u16, message: &str) -> bool {
@@ -243,34 +283,20 @@ impl SpeakerEstimator for JevSpeakerEstimator {
             },
         });
 
-        let url = format!("{}{SYSTEM_ONE_PATH}", self.base_url);
-        let user_agent = format!("yomitone/{}", env!("CARGO_PKG_VERSION"));
-        let authorization = format!("Bearer {}", self.api_key);
-        let request = |attempt: u32| {
-            let request = self
-                .agent
-                .post(&url)
-                .set("Authorization", &authorization)
-                .set("Accept", "application/json")
-                .set("User-Agent", &user_agent);
-            if attempt > 0 {
-                request.set("X-TypeSafe-Retry-Count", &attempt.to_string())
-            } else {
-                request
-            }
-        };
-        let response = send_with_retry(&RETRY, request, &body).map_err(|failure| self.map_failure(failure))?;
+        let endpoint = self.endpoint("POST", SYSTEM_ONE_PATH);
+        let response = send_with_retry(&RETRY, self.request("POST", SYSTEM_ONE_PATH), Some(&body))
+            .map_err(|failure| map_failure(&endpoint, failure))?;
 
-        let response: SystemOneResponse = response.into_json().map_err(|e| self.invalid_response(e))?;
+        let response: SystemOneResponse = response.into_json().map_err(|e| invalid_response(&endpoint, e))?;
         // 未対応の回答種別は読み飛ばすため、回答が欠けている場合がある
         let Some(answer) = response.answers.get("speaker") else {
             return Ok(None);
         };
         match answer.get("type").and_then(Value::as_str) {
-            None => Err(self.invalid_response("answers.speaker.type")),
+            None => Err(invalid_response(&endpoint, "answers.speaker.type")),
             Some("choice") => {
                 let answer: ChoiceAnswer =
-                    serde_json::from_value(answer.clone()).map_err(|e| self.invalid_response(e))?;
+                    serde_json::from_value(answer.clone()).map_err(|e| invalid_response(&endpoint, e))?;
                 Ok(criteria
                     .keys()
                     .position(|key| *key == answer.choice)
