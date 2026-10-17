@@ -883,9 +883,9 @@ dependencies = [
 
 [[package]]
 name = "naui"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1735681c56a6790a0c04f188b2c17590b6d04e9428f4b2d0db9773a749292a10"
+checksum = "c8bca8870ca8bdb5042971f8380f5e2dcbcb27c1a26a53ac33cf3237c6ea9c36"
 dependencies = [
  "naui-core",
  "naui-gtk",
@@ -896,15 +896,15 @@ dependencies = [
 
 [[package]]
 name = "naui-core"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e9471d670ef64d57530fe33ea3ffe39bf13fa7f99529d4c519e721fa2b2ce6e"
+checksum = "171dd20ef65bd499585785d93205d157d728e2e4d1e01c0e521c5381ba779c4a"
 
 [[package]]
 name = "naui-gtk"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd845e85d4df2f2a784b8ed296b62d159a6153787fa0ca3551d4aa81dd9488d"
+checksum = "7d9a0bf27ee29fa801784f63c3f8c870a2a0e9cc6503fb0922d565bf1f34784e"
 dependencies = [
  "gtk4",
  "libadwaita",
@@ -914,9 +914,9 @@ dependencies = [
 
 [[package]]
 name = "naui-macos"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7c5b3d92db3a139ef55325d5f725c5095dcff788a68a81869ebad83f4a642af"
+checksum = "44fe57c467aaa847f3817a62c9b5adff47183931bb0ecfffb725d9b78989f4df"
 dependencies = [
  "block2",
  "dispatch2",
@@ -932,9 +932,9 @@ dependencies = [
 
 [[package]]
 name = "naui-web"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cafc4e1171fe14954dcdf812a5b5379b9d9a3f62f8881329f7fbec6f1ba060ac"
+checksum = "c068d94217f9ea081eea541474eca51089f42e15dd10bc175a101f4f9a7d19f2"
 dependencies = [
  "js-sys",
  "naui-core",
@@ -944,9 +944,9 @@ dependencies = [
 
 [[package]]
 name = "naui-windows"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60e41bae04d1a852f7fae6a21bd4eb214cfd3c6f4f8e9534cafba4ae67336907"
+checksum = "f46c09c9db16c16cabf8b326152ad1fc66b249063ef28cd17a717e1c647a8562"
 dependencies = [
  "naui-core",
  "naui-winui3",
@@ -956,9 +956,9 @@ dependencies = [
 
 [[package]]
 name = "naui-winui3"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "084677329f3cb34f29d7d4db82ae804b0d7cded1c3f60c62b348bf319223a20b"
+checksum = "026bc6039dd1769b83adb560604760f361edae2107d8d2c135f2cb44c55be9e0"
 dependencies = [
  "windows",
  "windows-collections",
